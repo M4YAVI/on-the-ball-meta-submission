@@ -32,6 +32,30 @@ for (const app of APPS) {
 
 const procs = [];
 let lobbyReady = false;
+let readyCount = 0;
+
+function launchChrome() {
+  if (lobbyReady) return;
+  lobbyReady = true;
+  console.log('\n========================================================');
+  console.log('>>> LAUNCHING GOOGLE CHROME WITH META WEBXR EMULATOR');
+  console.log('    1. VR Central Lobby:   https://localhost:8080');
+  console.log('    2. Cricket Catch:      https://localhost:8081/?autoxr=1');
+  console.log('    3. Glove Up:           https://localhost:8082/?autoxr=1');
+  console.log('    4. Bulb Rush:          https://localhost:8083/?autoxr=1');
+  console.log('========================================================\n');
+  spawn('cmd.exe', ['/c', 'start', 'chrome',
+    'https://localhost:8080',
+    'https://localhost:8081/?autoxr=1',
+    'https://localhost:8082/?autoxr=1',
+    'https://localhost:8083/?autoxr=1',
+    '--ignore-certificate-errors',
+    '--allow-insecure-localhost'
+  ], {
+    detached: true,
+    stdio: 'ignore',
+  });
+}
 
 for (const app of APPS) {
   console.log(`[STARTING] ${app.name} on port ${app.port}...`);
@@ -45,18 +69,17 @@ for (const app of APPS) {
   });
 
   proc.stdout.on('data', (d) => {
-    const text = d.toString().trim();
+    const text = d.toString();
     if (text.includes('Local:')) {
       console.log(`[READY] ${app.name} -> https://localhost:${app.port}`);
-      if (app.port === 8080 && !lobbyReady) {
-        lobbyReady = true;
-        console.log('\n>>> Launching Google Chrome with Meta WebXR Emulator (IWER)...');
-        console.log('    Opening VR Lobby (8080), Cricket Catch (8081), and Glove Up (8082)...');
-        spawn('cmd.exe', ['/c', 'start', 'chrome', 'https://localhost:8080', 'https://localhost:8081', 'https://localhost:8082', '--ignore-certificate-errors', '--allow-insecure-localhost'], {
-          detached: true,
-          stdio: 'ignore',
-        });
+      readyCount++;
+      if (readyCount >= APPS.length) {
+        launchChrome();
+      } else {
+        setTimeout(launchChrome, 10000);
       }
+    } else if (text.includes('ready in') || text.includes('IWSDK:')) {
+      console.log(`[${app.name}] ${text.trim()}`);
     }
   });
 

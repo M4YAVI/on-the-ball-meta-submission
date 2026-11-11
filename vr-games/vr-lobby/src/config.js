@@ -78,7 +78,7 @@ export function gridSize(games = CFG.games, g = CFG.grid) {
 export function getGameUrl(game) {
   const loc = window.location;
   if (loc.port === '8080') {
-    return `${loc.protocol}//${loc.hostname}:${game.port}`;
+    return `${loc.protocol}//${loc.hostname}:${game.port}/?autoxr=1`;
   }
   const basePath = loc.pathname.replace(/\/$/, '');
   const subfolder = game.id === 'bulbrush' ? 'bulb' : game.id;

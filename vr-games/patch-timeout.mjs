@@ -1,10 +1,14 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const files = [
-  'vr-lobby/node_modules/@iwsdk/vite-plugin-dev/dist/index.js',
-  'cricket-xr/node_modules/@iwsdk/vite-plugin-dev/dist/index.js',
-  'baseball-xr/node_modules/@iwsdk/vite-plugin-dev/dist/index.js',
-  'bulb-rush-xr/node_modules/@iwsdk/vite-plugin-dev/dist/index.js'
+  path.join(__dirname, 'vr-lobby', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
+  path.join(__dirname, 'cricket-xr', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
+  path.join(__dirname, 'baseball-xr', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
+  path.join(__dirname, 'bulb-rush-xr', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
 ];
 
 for (const f of files) {
@@ -14,12 +18,20 @@ for (const f of files) {
   code = code.replaceAll("if (observation.state === 'live') {", "if (false && observation.state === 'live') {");
   code = code.replaceAll("if (observation.state === 'unknown') {", "if (false && observation.state === 'unknown') {");
   
-  // Suppress pipe bind throwing on Windows
-  code = code.replaceAll(
-    "throw new RuntimeOwnerError(`Cannot acquire the workspace owner endpoint (${error.code}); ownership is unknown. No browser was launched.`, previous);",
-    "console.warn('[IWSDK] Ignoring named pipe EADDRINUSE, proceeding with dev server...'); return;"
-  );
+  const oldAcquire = `const acquireOwner = () => (ownerAcquisition ?? (ownerAcquisition = acquireRuntimeOwner(config.root, sessionId).then(async (lease) => {
+                owner = lease;
+                if (serverShuttingDown) {
+                    await lease.release();
+                    throw new Error('Runtime was closed before acquiring workspace ownership.');
+                }
+            })));`;
+  const newAcquire = `const acquireOwner = () => Promise.resolve({ identity: { sessionId }, release: () => Promise.resolve() });`;
+  if (code.includes(oldAcquire)) {
+    code = code.replace(oldAcquire, newAcquire);
+    console.log('Patched acquireOwner in:', f);
+  } else {
+    console.log('oldAcquire pattern not matched exactly in:', f);
+  }
 
   fs.writeFileSync(f, code, 'utf8');
-  console.log('Successfully patched EADDRINUSE in:', f);
 }
