@@ -1,0 +1,83 @@
+# Builds the games and publishes them to GitHub Pages (HTTPS, which WebXR requires):
+#   Lobby (central hub) at  https://<user>.github.io/<repo>/
+#   Cricket Catch       at  https://<user>.github.io/<repo>/cricket/
+#   Glove Up (baseball)  at  https://<user>.github.io/<repo>/baseball/
+#   Bulb Rush           at  https://<user>.github.io/<repo>/bulb/
+# One-time setup: repo Settings > Pages > Build and deployment > Source: "GitHub Actions".
+# It runs when a game changes on main, or by hand from the Actions tab.
+name: Deploy the games to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vr-lobby/**'
+      - 'cricket-xr/**'
+      - 'baseball-xr/**'
+      - 'bulb-rush-xr/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            vr-lobby/package-lock.json
+            cricket-xr/package-lock.json
+            baseball-xr/package-lock.json
+            bulb-rush-xr/package-lock.json
+      - name: Build Lobby
+        working-directory: vr-lobby
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - name: Build Cricket Catch
+        working-directory: cricket-xr
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - name: Build Glove Up (baseball)
+        working-directory: baseball-xr
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - name: Build Bulb Rush
+        working-directory: bulb-rush-xr
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      # All builds use relative paths (vite base './'), so each game works from a sub-folder.
+      - name: Assemble all games into lobby directory
+        run: |
+          cp -r cricket-xr/dist vr-lobby/dist/cricket
+          cp -r baseball-xr/dist vr-lobby/dist/baseball
+          cp -r bulb-rush-xr/dist vr-lobby/dist/bulb
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: vr-lobby/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
