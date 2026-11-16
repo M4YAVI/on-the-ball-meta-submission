@@ -5,14 +5,18 @@ official Meta Immersive Web SDK (IWSDK 1.1.0) from the VEGAH handoff baseline (`
 
 ## The experience
 1. Sit down, put on the glasses or headset, press **Enter VR**.
-2. Look at a sport and pinch to select it (cricket is live; baseball, tennis and football show "coming soon").
+2. The app opens on the four sport tiles (deck slide 4). Look at a sport and pinch to select it; the white ring sits on the
+   one you are looking at. Cricket is live; baseball, tennis and football show "coming soon".
 3. Choose how the ball is followed: **Eye tracking** (after a 10-second calibration) or **Head mode**.
 4. You are the **batsman**: you take guard at the crease, your stumps behind you, the bowler 22 yards away. One warm-up ball,
-   then 20 deliveries come at you on three lines (left, straight, right) and varying lengths. You only watch. Nothing to catch or hit.
+   then 20 deliveries come at you on three lines (left, straight, right) and varying lengths. The ball is a red cricket
+   ball with the deck's white ring around it (slides 5 and 12). You only watch. Nothing to catch or hit.
 5. After each ball: GREEN / AMBER / RED / UNSCORED with a symbol, a word and a plain reason. After 20: the scorecard with the
    20 dots in order, the counts, minutes, and your earlier sessions underneath (with "+N green on your last session").
 
 Hands are only for navigation (look + pinch, or hand ray + pinch). Pause, start over and exit are always available.
+The X on the scorecard ("Done") goes back to the sport tiles. A pause, a hidden page, the end of the XR session or a
+recenter throws away the ball in flight; it is replayed, never scored as a miss.
 
 ## Scoring (baseline rules, kept)
 - At least 75% of the flight must be validly tracked, otherwise **UNSCORED**. A sensor gap is never the player's miss.
@@ -37,12 +41,14 @@ AMBER/RED for a head-only device. That is the case this product is built for.
 ## Run
 ```
 npm install
-npm test            # 58 unit and adversarial tests (scoring, tracking faults, state machine, storage, batsman geometry)
+npm test            # 60 unit and adversarial tests (scoring, tracking faults, state machine, storage, batsman geometry)
+npm run test:baseline  # the handoff's original 14 checks, unchanged
 npm run dev         # https://localhost:8084 with the Meta VR Glasses emulator
 npx vite build      # production build in dist/ (emulator is injected for desktop browsers, skipped on the Quest browser)
 ```
 Dev-only autopilot keys in the emulator: `1` eyes follow the ball (also passes calibration), `2` late, `3` away,
-`4` blink, `5` long dropout, `6` head follows the ball, `0` off.
+`4` blink, `5` long dropout, `6` head follows the ball (known limit: the emulator does not move its head from this key,
+so it plays as a head held straight), `0` off.
 
 ## Privacy
 Only per-session totals are stored, on this device (localStorage). No gaze or head poses, no eye images, no network calls.
