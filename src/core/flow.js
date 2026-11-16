@@ -21,19 +21,20 @@ export const PHASE = Object.freeze({
   SCORECARD: 'scorecard',
 });
 
-// Only cricket is playable in this build. The others are shown, honestly, as coming later.
+// Cricket and football are playable. The others are shown, honestly, as coming later.
 export const SPORTS = Object.freeze([
   { id: 'cricket', label: 'Cricket', live: true },
   { id: 'baseball', label: 'Baseball', live: false },
   { id: 'tennis', label: 'Tennis', live: false },
-  { id: 'football', label: 'Football', live: false },
+  { id: 'football', label: 'Football', live: true },
 ]);
 
 export const MODE = Object.freeze({ EYE: 'eye', HEAD: 'head', SIMULATED: 'simulated' });
 
 export class GameFlow {
-  constructor({ total = 20, rng = cryptoRng() } = {}) {
+  constructor({ total = 20, rng = cryptoRng(), deliveries = makeDeliveries } = {}) {
     this.total = total;
+    this.makeDeliveries = deliveries; // each sport builds its own set of deliveries (football/src/core/ball-path.js)
     this.rng = rng;
     this.reset();
   }
@@ -101,7 +102,7 @@ export class GameFlow {
   // Starts (or restarts) the next delivery. Allowed from `ready` and `between`.
   beginBall(now = 0) {
     if (this.phase !== PHASE.READY && this.phase !== PHASE.BETWEEN) return null;
-    if (this.deliveries.length === 0) this.deliveries = makeDeliveries(this.total, this.rng);
+    if (this.deliveries.length === 0) this.deliveries = this.makeDeliveries(this.total, this.rng);
     this.warmup = !this.warmupDone;
     this.phase = PHASE.PLAYING;
     if (this.startedAt === null && !this.warmup) this.startedAt = now;

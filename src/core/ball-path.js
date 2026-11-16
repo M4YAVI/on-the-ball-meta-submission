@@ -11,7 +11,8 @@
 // the batsman's left) at the chosen speed in km/h. In the air it falls under gravity and slows with air drag. It pitches on
 // a length, loses height and pace on the bounce (a cricket ball keeps about half its downward speed and most of its forward
 // speed), then rises to the batsman and is gone about 1.2 m in front of the eyes, below waist height, where a bat would meet
-// it. It never reaches the face. Left / straight / right lanes end up to 16 degrees to the side: far enough that a head held
+// it, or a little earlier if it would otherwise drop more than 25 degrees below eye level (see PATH.arrivalFloorDeg).
+// It never reaches the face. Left / straight / right lanes end up to 16 degrees to the side: far enough that a head held
 // straight is NOT on the ball while the eyes can be (the case eye tracking exists for), and still inside the glasses' 37 / 37
 // / 25 / 43 degree view with a margin.
 
@@ -28,6 +29,11 @@ export const PATH = Object.freeze({
   lengthSpreadM: 1.5, // full balls pitch up to this much closer, short balls this much further away
   maxLateralDeg: 16, // sideways angle at arrival for the left / right lanes
   maxCurveM: 0.22, // extra swing in the air
+  // Lowest the ball is ever drawn, in degrees below straight ahead. A full ball at pace skids through at knee height and
+  // would reach 37 deg down at the bat: past where eyes comfortably rotate (~25 deg), where eye trackers are least accurate,
+  // through the heads-up strip (its top edge is ~27 deg down) and only 6 deg inside the glasses' 43 deg lower edge. So a
+  // delivery "arrives" at the bat or at this angle, whichever comes first. The physics up to that point is unchanged.
+  arrivalFloorDeg: 25,
 });
 
 // Ball flight. Drag: 0.5 * air density 1.225 * drag coefficient 0.45 * cross-section 0.00407 m^2 / mass 0.156 kg.
@@ -88,9 +94,30 @@ export function flight(length = 0, kmh = DEFAULT_KMH) {
   const vy1 = -PHYS.restitution * vyImpact;
   const vb = v0 * Math.exp(-k * d1); // forward speed when it pitches
   const v1 = PHYS.keepPace * vb;
-  const t2 = (Math.exp(k * d2) - 1) / (k * v1);
-  const vEnd = v1 * Math.exp(-k * d2);
-  return { v0, zb, yb, t1, t2, total: t1 + t2, vy0, vy1, v1, vb, vEnd };
+  const tBat = (Math.exp(k * d2) - 1) / (k * v1);
+  // After the bounce: stop at the bat, or earlier where the ball first drops below the arrival floor.
+  const zAt = (u) => zb + Math.log(1 + k * v1 * u) / k;
+  const yAt = (u) => yb + vy1 * u - 0.5 * PHYS.g * u * u;
+  const floor = Math.tan((PATH.arrivalFloorDeg * Math.PI) / 180);
+  const below = (u) => yAt(u) < -floor * -zAt(u);
+  let t2 = tBat;
+  const STEPS = 64;
+  for (let i = 1; i <= STEPS; i++) {
+    const u = (tBat * i) / STEPS;
+    if (!below(u)) continue;
+    let lo = (tBat * (i - 1)) / STEPS;
+    let hi = u;
+    for (let j = 0; j < 40; j++) {
+      const mid = (lo + hi) / 2;
+      if (below(mid)) hi = mid;
+      else lo = mid;
+    }
+    t2 = lo;
+    break;
+  }
+  const endZ = t2 === tBat ? PATH.endZ : zAt(t2);
+  const vEnd = v1 * Math.exp(-k * (endZ - zb));
+  return { v0, zb, yb, t1, t2, total: t1 + t2, vy0, vy1, v1, vb, vEnd, endZ };
 }
 
 // Flight time of one delivery in milliseconds.
@@ -122,10 +149,11 @@ export function ballPosition(t01, lane = 0, curve = 0, length = 0, kmh = DEFAULT
     z = f.zb + Math.log(1 + k * f.v1 * u) / k;
     y = f.yb + f.vy1 * u - 0.5 * PHYS.g * u * u;
   }
-  if (t >= f.total) z = PATH.endZ; // exact arrival, no rounding drift
-  // Sideways: a straight line from the hand to the lane's end point, plus a swing that peaks mid-flight.
-  const s = (z - PATH.releaseZ) / (PATH.endZ - PATH.releaseZ);
-  const xEnd = Math.tan((PATH.maxLateralDeg * Math.PI) / 180) * -PATH.endZ;
+  if (t >= f.total) z = f.endZ; // exact arrival, no rounding drift
+  // Sideways: a straight line from the hand to the lane's end point, plus a swing that peaks mid-flight. The end point keeps
+  // the full lane angle even when the ball arrives early at the floor, so side balls still need the eyes, not a straight head.
+  const s = (z - PATH.releaseZ) / (f.endZ - PATH.releaseZ);
+  const xEnd = Math.tan((PATH.maxLateralDeg * Math.PI) / 180) * -f.endZ;
   const x = PATH.releaseX * (1 - s) + l * xEnd * s + c * Math.sin(Math.PI * s);
   return [x, y, z];
 }

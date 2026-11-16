@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Trial, angle, tally, STATUS, SAMPLE } from '../src/core/engine.js';
+import { Trial, angle, tally, STATUS, SAMPLE, TOLERANCE, toleranceFor } from '../src/core/engine.js';
 import { GazeVerdict, VERDICT, CalibrationCheck, CAL } from '../src/core/gaze-verdict.js';
 import { ballPosition, bounceT, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, flight, flightMs, FIELD, FOV, PATH, PHYS, SPEED_OPTIONS } from '../src/core/ball-path.js';
 import { GameFlow, PHASE, MODE } from '../src/core/flow.js';
@@ -120,6 +120,28 @@ test('T11: duplicate, out-of-order, negative, future and non-finite times are re
   assert.equal(x.sample('50', 0, 'eye'), SAMPLE.BAD_TIME);
   assert.equal(x.valid, 0);
 });
+test('edge gaze: eye mode cone is 7 deg near the centre, widens toward the edge, capped at 11; head mode stays 7', () => {
+  assert.equal(toleranceFor(0, 'eye'), 7);
+  assert.equal(toleranceFor(10, 'eye'), 7);
+  assert.ok(Math.abs(toleranceFor(20, 'eye') - 9) < 1e-9);
+  assert.equal(toleranceFor(60, 'eye'), TOLERANCE.max);
+  assert.equal(toleranceFor(25, 'simulated'), toleranceFor(25, 'eye'));
+  for (const e of [0, 16, 30, 60]) assert.equal(toleranceFor(e, 'head'), 7);
+  assert.equal(toleranceFor(NaN, 'eye'), 7);
+  // the cone never swallows the ball's offset: a head held straight (eyes centred) is never "on" a side ball
+  for (let e = 12; e <= 40; e++) assert.ok(toleranceFor(e, 'eye') < e);
+});
+test('edge gaze: a per-sample cone scores an 9 deg error as on the ball at the edge but not at the centre', () => {
+  const run = (tol) => {
+    const tr = new Trial('eye', 1000, 7);
+    for (let t = 0; t <= 1000; t += 10) tr.sample(t, 9, 'eye', true, tol);
+    return tr.finish();
+  };
+  assert.equal(run(toleranceFor(25, 'eye')).status, STATUS.GREEN);
+  assert.equal(run(toleranceFor(0, 'eye')).status, STATUS.RED);
+  assert.equal(run(NaN).status, STATUS.RED, 'a bad cone falls back to the trial tolerance');
+  assert.equal(run(500).status, STATUS.RED, 'an out-of-range cone falls back too');
+});
 test('trial constructor validates duration, tolerance and mode', () => {
   assert.throws(() => new Trial('eye', 0));
   assert.throws(() => new Trial('eye', NaN));
@@ -235,11 +257,42 @@ test('batsman view: the player stands at the crease with their own stumps behind
 });
 test('path starts at the bowler, comes all the way to the batsman, never touches the face', () => {
   assert.ok(Math.abs(ballPosition(0, 0, 0)[2] - PATH.releaseZ) < 1e-9);
-  assert.ok(Math.abs(ballPosition(1, 0, 0)[2] - PATH.endZ) < 1e-9);
+  assert.ok(Math.abs(ballPosition(1, 0, 0)[2] - flight(0).endZ) < 1e-9);
   assert.ok(-PATH.endZ <= 1.5, 'the ball arrives at the bat, not 2.6 m away');
+  for (const s of SPEED_OPTIONS) {
+    for (const len of [-1, 0, 1]) {
+      const z = flight(len, s.kmh).endZ;
+      assert.ok(z <= PATH.endZ && z > -2.4, `${s.id} length ${len} ends at ${z}: in the batsman's hitting zone`);
+    }
+  }
   assert.ok(PATH.endZ < FIELD.battingCreaseZ, 'it arrives in front of the crease');
   for (let i = 0; i <= 100; i++) assert.ok(-ballPosition(i / 100, 1, 0.2)[2] >= 1.15);
   assert.ok(ballPosition(1, 0, 0)[1] < -0.3, 'it arrives below the eyes, around waist height');
+});
+test('no delivery ever drops more than 25 degrees below eye level (comfortable eye angle, clear of the heads-up strip)', () => {
+  for (const s of SPEED_OPTIONS) {
+    for (const len of [-1, 0, 1]) {
+      for (const lane of [-1, 0, 1]) {
+        for (const curve of [-PATH.maxCurveM, 0, PATH.maxCurveM]) {
+          for (let i = 0; i <= 200; i++) {
+            const v = viewAngles(ballPosition(i / 200, lane, curve, len, s.kmh)).vertical;
+            assert.ok(v >= -PATH.arrivalFloorDeg - 0.05, `${s.id} len ${len} lane ${lane} reaches ${v.toFixed(1)} deg down`);
+          }
+        }
+      }
+    }
+  }
+  // the fast full ball, the old worst case (37 deg down), is still a real delivery that ends near the bat
+  const f = flight(1, 140);
+  assert.ok(f.t2 > 0.02 && f.endZ > -2.4 && f.endZ > f.zb, 'it still pitches and comes on toward the bat');
+});
+test('side deliveries keep their full 16 degree angle at every speed and length, even when they end early', () => {
+  for (const s of SPEED_OPTIONS) {
+    for (const len of [-1, 0, 1]) {
+      const h = viewAngles(ballPosition(1, 1, 0, len, s.kmh)).horizontal;
+      assert.ok(Math.abs(h - PATH.maxLateralDeg) < 0.01, `${s.id} len ${len} ends at ${h} deg`);
+    }
+  }
 });
 test('a side delivery ends far enough to the side that a straight head misses it but eyes can follow (the eye-tracking case)', () => {
   for (const lane of [-1, 1]) {

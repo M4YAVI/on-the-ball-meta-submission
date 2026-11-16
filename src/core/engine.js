@@ -35,6 +35,20 @@ export const RULES = Object.freeze({
   maxErrorDeg: 180,
 });
 
+// How close the gaze must be to the ball to count as "on the ball", by where the ball is in the view.
+// Eye trackers are most accurate straight ahead and lose accuracy toward the edge (Meta: eye signals are noisy, use a
+// generous cone), and the eyes themselves rarely land exactly on a target far from centre: they settle a little short and
+// let the head finish the turn. A fixed 7 deg cone therefore marks good watching at the edge as a miss. So:
+//   - eye / simulated mode: 7 deg while the ball is within 10 deg of where the head points, then +0.2 deg for every degree
+//     further out, never more than 11 deg. Still below the ball's offset (a head held straight is never "on" a side ball).
+//   - head mode: always 7 deg. The head ray has no tracker noise, and the dot it draws is right where it points.
+export const TOLERANCE = Object.freeze({ base: 7, flatDeg: 10, perDeg: 0.2, max: 11 });
+export function toleranceFor(eccentricityDeg, mode = 'eye') {
+  if (mode === 'head' || !Number.isFinite(eccentricityDeg)) return TOLERANCE.base;
+  const extra = Math.max(0, eccentricityDeg - TOLERANCE.flatDeg) * TOLERANCE.perDeg;
+  return Math.min(TOLERANCE.max, TOLERANCE.base + extra);
+}
+
 const isVec3 = (v) =>
   v != null && v.length === 3 && Number.isFinite(v[0]) && Number.isFinite(v[1]) && Number.isFinite(v[2]);
 
@@ -87,7 +101,8 @@ export class Trial {
   // t: ms since release, on the clock of the caller (XR frame time; we never invent a sensor timestamp).
   // error: angle in degrees between the gaze ray and the direction to the ball.
   // source: where the ray came from. valid: false when the runtime had no usable pose this frame.
-  sample(t, error, source, valid = true) {
+  // tolerance: this sample's cone (from toleranceFor); the trial's own tolerance when missing or out of range.
+  sample(t, error, source, valid = true, tolerance = this.tolerance) {
     if (this.closed) return SAMPLE.CLOSED;
     if (!Number.isFinite(t) || t < 0 || t > this.duration) {
       this.bad++;
@@ -114,7 +129,8 @@ export class Trial {
       return SAMPLE.INVALID;
     }
 
-    const onBall = error <= this.tolerance;
+    const tol = Number.isFinite(tolerance) && tolerance > 0 && tolerance <= 90 ? tolerance : this.tolerance;
+    const onBall = error <= tol;
     if (onBall && this.first === null) this.first = t;
 
     if (prevT === null || !prevGood) return SAMPLE.BASELINE; // nothing before it to measure an interval from
