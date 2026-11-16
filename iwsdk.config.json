@@ -13,7 +13,8 @@
       "mode": "vr",
       "offer": "always",
       "features": {
-        "handTracking": true
+        "handTracking": true,
+        "gazeTracking": true
       }
     },
     "input": {
@@ -21,7 +22,7 @@
     },
     "render": {
       "fov": 70,
-      "near": 0.001,
+      "near": 0.05,
       "far": 200,
       "camera": {
         "position": [
@@ -31,8 +32,8 @@
         ],
         "lookAt": [
           0,
-          0.95,
-          -1.95
+          1.5,
+          -2
         ]
       }
     },
@@ -42,15 +43,17 @@
       "physics": false,
       "sceneUnderstanding": false,
       "environmentRaycast": false,
-      "spatialUI": {
-        "kit": "horizon",
-        "preferredColorScheme": "dark"
+      "gaze": {
+        "logDiagnostics": true,
+        "suppressWhenDirectPointerActive": false
       }
     }
   },
   "dev": {
     "emulator": {
-      "device": "metaQuest3"
+      "device": "metaVRGlasses",
+      "injectOnBuild": true,
+      "activation": "always"
     }
   }
 }

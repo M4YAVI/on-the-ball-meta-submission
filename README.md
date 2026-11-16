@@ -1,45 +1,57 @@
-# IWSDK App
+# ON THE BALL
 
-This project uses `iwsdk.config.json` for declarative scene, asset, component,
-XR, and emulator configuration. Application systems remain explicit in
-`src/index.ts`.
+**Watch the ball. Get the count.** A seated, watch-only cricket experience for Meta VR Glasses and Meta Quest, built on the
+official Meta Immersive Web SDK (IWSDK 1.1.0) from the VEGAH handoff baseline (`handoff-baseline/`, tag v0.1).
 
-```sh
-npm install
-npm run dev
+## The experience
+1. Sit down, put on the glasses or headset, press **Enter VR**.
+2. Look at a sport and pinch to select it (cricket is live; baseball, tennis and football show "coming soon").
+3. Choose how the ball is followed: **Eye tracking** (after a 10-second calibration) or **Head mode**.
+4. You are the **batsman**: you take guard at the crease, your stumps behind you, the bowler 22 yards away. One warm-up ball,
+   then 20 deliveries come at you on three lines (left, straight, right) and varying lengths. You only watch. Nothing to catch or hit.
+5. After each ball: GREEN / AMBER / RED / UNSCORED with a symbol, a word and a plain reason. After 20: the scorecard with the
+   20 dots in order, the counts, minutes, and your earlier sessions underneath (with "+N green on your last session").
+
+Hands are only for navigation (look + pinch, or hand ray + pinch). Pause, start over and exit are always available.
+
+## Scoring (baseline rules, kept)
+- At least 75% of the flight must be validly tracked, otherwise **UNSCORED**. A sensor gap is never the player's miss.
+- **GREEN**: on the ball (within 7 degrees) for at least 80% of the tracked time, picked up within the first 30% of the
+  flight, and still on it as it arrives (the deck's "eyes stayed on the ball until it arrived"; a blink right at arrival
+  skips this check instead of failing it).
+- **AMBER**: on the ball at least 50% of the time (found it late, left it before it arrived, or partly on it).
+- **RED**: looked away.
+- An interval is credited only between two good, in-order samples less than 100 ms apart (handoff fix T09).
+
+## Devices and modes (never mixed, always labelled)
+| Device | What we use | Label |
+|---|---|---|
+| Meta VR Glasses | Runtime `gaze-tracking`, unlocked only after calibration proves the eyes move while the head stays still | EYE |
+| Meta Quest Pro | Same as above if the browser grants gaze; otherwise head mode | EYE or HEAD |
+| Meta Quest 3 / 3S | No eye tracker: head mode, with a faint amber dot showing where the head points | HEAD |
+| Desktop emulator (IWER) | Emulated gaze; works for demos and tests, never presented as real eyes | SIMULATED |
+
+Why eyes matter: a ball that ends 16 degrees to the side while the head stays straight is GREEN for eyes that follow it and
+AMBER/RED for a head-only device. That is the case this product is built for.
+
+## Run
 ```
+npm install
+npm test            # 58 unit and adversarial tests (scoring, tracking faults, state machine, storage, batsman geometry)
+npm run dev         # https://localhost:8084 with the Meta VR Glasses emulator
+npx vite build      # production build in dist/ (emulator is injected for desktop browsers, skipped on the Quest browser)
+```
+Dev-only autopilot keys in the emulator: `1` eyes follow the ball (also passes calibration), `2` late, `3` away,
+`4` blink, `5` long dropout, `6` head follows the ball, `0` off.
 
-Use the Runtime and Editor controls in the managed browser to switch between
-the running experience and its authored scene.
+## Privacy
+Only per-session totals are stored, on this device (localStorage). No gaze or head poses, no eye images, no network calls.
+The flat page has Export and Delete buttons.
 
-## Starter content
+## Known limits (honest)
+- No real eye-tracking hardware was available. Eye mode was exercised only with the emulator (labelled SIMULATED).
+- Quest frame rate must be measured on a real Quest before claiming 60+ fps (desktop: ~72 draw calls, ~52k triangles).
+- Scores are local practice scores, not tamper-proof. Coach dashboards, cloud sync and leaderboards are P2 (after submission).
+- Thresholds are gameplay rules, not clinical or sports-performance claims.
 
-The robot and welcome panel are small examples of authored scene content plus
-runtime systems. The robot turns toward the player's head and plays a sound
-when pressed. To remove the robot, delete its scene node, its `RobotSystem`
-registration from `src/index.ts` or `src/index.js`, and its `Robot` registration
-from `src/components.ts` or `src/components.js`; you can then delete the unused
-robot component and system files. To remove the welcome panel, delete its scene
-node and its `PanelSystem` registration from the application entry point.
-
-The robot stands on the second of three numbered stations. The first holds dark
-pieces you can grab and move, and the third holds a ring you can spin in place.
-The studio props (the plinths and the dark pieces, plus the floor and stage in VR
-and Desktop 3D) are built in code in `src/scene-assets/studio.scene-asset.ts` or
-`.js`. The VR and Desktop 3D background furniture is built the same way in
-`src/scene-assets/decor.scene-asset.ts` or `.js`, so the starter downloads no
-extra models. To remove any of them, delete their scene nodes and their entries
-in `src/assets.ts` or `src/assets.js`, then delete the files you no longer use.
-The station labels are `public/ui/label-*.uikitml`.
-
-The rest of the look is built-in components in the scene, which you can edit in
-the editor without code. The soft light on every object is the scene root's
-`IBLGradient` (select the Level Root to edit it), and the soft shadows under
-each object are `ContactShadow` nodes. In VR and Desktop 3D, the sky is the
-scene root's `DomeGradient` (its colors, tilt and dither are also on the Level
-Root), and the floor fades into it through the `DomeFade` on the floor node. AR
-projects have no sky or floor, so passthrough stays visible, and a
-`ShadowCatcher` node grounds the stations.
-
-- Minimal scene walkthrough: https://iwsdk.dev/guides/01b-minimal-scene.html
-- XR-enabled projects — IWER emulator controls: https://iwsdk.dev/guides/02-testing-experience.html#iwer-controls
+See `docs/` for the handoff brief, device matrix and the test and acceptance matrix.
