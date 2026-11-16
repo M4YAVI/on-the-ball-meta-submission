@@ -236,10 +236,11 @@ export class Effects {
     this.popups = [];
     for (let i = 0; i < 6; i++) {
       const canvas = document.createElement('canvas');
-      canvas.width = 320;
-      canvas.height = 140;
+      canvas.width = 800; // 2.5x the 320x140 drawing grid: the popup is read from ~0.6 m
+      canvas.height = 350;
       const texture = new CanvasTexture(canvas);
       texture.colorSpace = SRGBColorSpace;
+      texture.anisotropy = 8;
       const mat = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, side: DoubleSide, opacity: 0 });
       const mesh = new Mesh(new PlaneGeometry(0.2, 0.0875), mat);
       mesh.visible = false;
@@ -272,22 +273,25 @@ export class Effects {
     const p = this.popups[this.nextPopup];
     this.nextPopup = (this.nextPopup + 1) % this.popups.length;
     const { g, canvas } = p;
+    g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, canvas.width, canvas.height);
+    g.setTransform(2.5, 0, 0, 2.5, 0, 0);
+    const cw = 320; // drawing grid width (the canvas holds 2.5x this)
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.lineJoin = 'round';
     g.strokeStyle = 'rgba(4, 6, 20, 0.7)';
     g.lineWidth = 12;
     g.font = '900 78px system-ui, sans-serif';
-    g.strokeText(text, canvas.width / 2, sub ? 52 : 70, canvas.width * 0.95);
+    g.strokeText(text, cw / 2, sub ? 52 : 70, cw * 0.95);
     g.fillStyle = color;
-    g.fillText(text, canvas.width / 2, sub ? 52 : 70, canvas.width * 0.95);
+    g.fillText(text, cw / 2, sub ? 52 : 70, cw * 0.95);
     if (sub) {
       g.font = '700 40px system-ui, sans-serif';
       g.lineWidth = 8;
-      g.strokeText(sub, canvas.width / 2, 112, canvas.width * 0.95);
+      g.strokeText(sub, cw / 2, 112, cw * 0.95);
       g.fillStyle = '#e8eeff';
-      g.fillText(sub, canvas.width / 2, 112, canvas.width * 0.95);
+      g.fillText(sub, cw / 2, 112, cw * 0.95);
     }
     p.texture.needsUpdate = true;
     const l = Math.hypot(x, z) || 1;
