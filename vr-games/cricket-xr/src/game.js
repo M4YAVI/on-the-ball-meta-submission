@@ -26,6 +26,7 @@ import {
   updateHandMotion,
 } from './catching.js';
 import { CFG, RESTART_POS, RESTART_RADIUS } from './config.js';
+import { makeLabel } from './label.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
 import { Effects, Sound } from './fx.js';
@@ -114,6 +115,14 @@ export class GameSystem extends createSystem({}) {
     );
     this.lobbyMarker.position.set(RESTART_POS.x - 0.42, RESTART_POS.y, RESTART_POS.z);
     this.world.createTransformEntity(this.lobbyMarker);
+
+    // Name tags under the two pinch targets (they were bare orbs, so nothing said which one was which).
+    this.markerLabel = makeLabel('PLAY AGAIN');
+    this.markerLabel.position.set(RESTART_POS.x, RESTART_POS.y - 0.2, RESTART_POS.z);
+    this.world.createTransformEntity(this.markerLabel);
+    this.lobbyLabel = makeLabel('LOBBY', 0.24);
+    this.lobbyLabel.position.set(RESTART_POS.x - 0.42, RESTART_POS.y - 0.2, RESTART_POS.z);
+    this.world.createTransformEntity(this.lobbyLabel);
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'l' || e.key === 'L') {
@@ -329,6 +338,8 @@ export class GameSystem extends createSystem({}) {
     this.eyeTracker.hide();
     this.marker.visible = false;
     this.lobbyMarker.visible = false;
+    this.markerLabel.visible = false;
+    this.lobbyLabel.visible = false;
     this.fx.clearTrail();
     this.hud.hideCard();
     this.hud.set({ score: 0, misses: 0, ballNo: 0, kmh: 0, focus: null });
@@ -660,6 +671,8 @@ export class GameSystem extends createSystem({}) {
     this.lockout = CFG.restartLockout;
     this.marker.visible = true;
     this.lobbyMarker.visible = true;
+    this.markerLabel.visible = true;
+    this.lobbyLabel.visible = true;
     const ratio = this.score / CFG.balls;
     const rating =
       ratio >= 0.95 ? 'Legendary hands!' : ratio >= 0.8 ? 'Safe hands!' : ratio >= 0.5 ? 'Good catching' : 'Keep practising';
