@@ -9,6 +9,7 @@
 //   https://<this-PC>:8443/baseball/  Glove Up
 //   https://<this-PC>:8443/bulb/      Bulb Rush
 //   https://<this-PC>:8443/ontheball/ ON THE BALL (its own app, source in ../on-the-ball)
+//   https://<this-PC>:8443/ontheball/football/ ON THE BALL football (source in ../on-the-ball/football)
 //
 // No game source is changed. Each app is built with its own vite.config.js and its own node_modules,
 // and the four builds are copied into hub/ the same way .github/workflows/pages.yml does it.
@@ -36,6 +37,7 @@ const APPS = [
   { name: 'Glove Up (Baseball)', dir: 'baseball-xr', mount: 'baseball' },
   { name: 'Bulb Rush', dir: 'bulb-rush-xr', mount: 'bulb' },
   { name: 'ON THE BALL', dir: '../on-the-ball', mount: 'ontheball' }, // the one real copy (its own git repo)
+  { name: 'ON THE BALL Football', dir: '../on-the-ball/football', mount: 'ontheball/football', sharedModules: '../on-the-ball' }, // a sub-project of ON THE BALL: no node_modules of its own
 ];
 
 // The HTTPS certificate the IWSDK dev plugin already made. It holds the cert and key together, as the plugin writes it.
@@ -43,7 +45,7 @@ const CERT = path.join(ROOT, 'vr-lobby', '.iwsdk', 'https', '_cert.pem');
 
 function buildApp(app) {
   const cwd = path.join(ROOT, app.dir);
-  const viteBin = path.join(cwd, 'node_modules', 'vite', 'bin', 'vite.js');
+  const viteBin = path.join(path.join(ROOT, app.sharedModules ?? app.dir), 'node_modules', 'vite', 'bin', 'vite.js');
   if (!fs.existsSync(viteBin)) {
     throw new Error(`${app.name}: dependencies are missing. Run "npm install" in ${app.dir}.`);
   }
@@ -73,6 +75,7 @@ const DEV_LINKS = [
   ['https://localhost:8082', '/baseball'],
   ['https://localhost:8083', '/bulb'],
   ['https://localhost:8084', '/ontheball'],
+  ['https://localhost:8085', '/ontheball/football'],
 ];
 
 function rewriteDevLinks(dir) {
@@ -190,6 +193,7 @@ function startServer() {
     console.log(`  Glove Up          https://localhost:${PORT}/baseball/`);
     console.log(`  Bulb Rush         https://localhost:${PORT}/bulb/`);
     console.log(`  ON THE BALL       https://localhost:${PORT}/ontheball/`);
+    console.log(`  ON THE BALL Football  https://localhost:${PORT}/ontheball/football/`);
     for (const ip of lanAddresses()) {
       console.log(`  On a Quest, use   https://${ip}:${PORT}/`);
     }

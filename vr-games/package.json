@@ -2,7 +2,7 @@
   "name": "vr-games-hub",
   "version": "1.0.0",
   "private": true,
-  "description": "One lobby and four games (Glove Up, Cricket Catch, Bulb Rush, ON THE BALL) on one HTTPS server",
+  "description": "One lobby and five games (Glove Up, Cricket Catch, Bulb Rush, ON THE BALL, ON THE BALL Football) on one HTTPS server",
   "scripts": {
     "start": "node one-server.mjs",
     "serve": "node one-server.mjs --serve",
