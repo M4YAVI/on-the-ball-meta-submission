@@ -413,12 +413,31 @@ const PAINTERS = {
     drawBulb(ctx, width / 2, y, s, true);
     vignette(ctx, 0.55);
   },
+  ontheball(ctx) {
+    paintSurface(
+      ctx,
+      606,
+      (u, v) => {
+        const k = 0.55 + 0.35 * Math.min(1, v * 1.3);
+        return [18 * k, 52 * k, 36 * k];
+      },
+      (v) => 4 + 16 * v,
+      0.003,
+    );
+    const r = H * 0.25;
+    const x = W * 0.5;
+    const y = H * 0.5;
+    softShadow(ctx, x + r * 0.26, y + r * 0.78, r * 1.34, r * 0.52, 0.76);
+    drawCricketBall(ctx, x, y, r);
+    vignette(ctx, 0.5);
+  },
 };
 
 // Where the ring sits on each picture (0..1 across and down), and which corner stays clear for the title.
 export const ART_LAYOUT = {
   baseball: { ringX: 0.5, ringY: 0.48, labelSide: 'left' },
   cricket: { ringX: 0.33, ringY: 0.54, labelSide: 'right' },
+  ontheball: { ringX: 0.5, ringY: 0.5, labelSide: 'left' },
   bulb: { ringX: 0.5, ringY: 0.5, labelSide: 'left' },
 };
 

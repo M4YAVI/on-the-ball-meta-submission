@@ -2,16 +2,14 @@
   "name": "vr-games-hub",
   "version": "1.0.0",
   "private": true,
-  "description": "Central VR Lobby and Three WebXR Sports & Arcade Games for Meta Quest",
+  "description": "One lobby and four games (Glove Up, Cricket Catch, Bulb Rush, ON THE BALL) on one HTTPS server",
   "scripts": {
-    "dev": "node start-all.mjs",
-    "dev:all": "node start-all.mjs",
-    "dev:lobby": "cd vr-lobby && npm run dev",
-    "dev:cricket": "cd cricket-xr && npm run dev:runtime",
-    "dev:baseball": "cd baseball-xr && npm run dev:runtime",
-    "dev:bulb-rush": "cd bulb-rush-xr && npm run dev:runtime",
+    "start": "node one-server.mjs",
+    "serve": "node one-server.mjs --serve",
+    "dev": "node one-server.mjs",
     "test:lobby": "cd vr-lobby && npm run test:unit",
-    "build:lobby": "cd vr-lobby && npm run build"
+    "test:ontheball": "cd ../on-the-ball && npm test",
+    "build:lobby": "cd vr-lobby && npm run build",
+    "dev:multi": "node start-all.mjs"
   }
 }
-

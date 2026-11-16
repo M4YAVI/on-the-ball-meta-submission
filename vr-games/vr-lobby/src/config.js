@@ -46,10 +46,19 @@ export const CFG = {
       art: 'bulb',
       row: 1,
       col: 0,
-      span: 2,
       port: 8083,
       storageKey: 'bulbrush-best',
       bestSuffix: ' pts',
+    },
+    {
+      id: 'ontheball',
+      title: 'ON THE BALL',
+      art: 'ontheball',
+      row: 1,
+      col: 1,
+      port: 8084,
+      storageKey: 'otb-best-green',
+      bestSuffix: ' / 20 green',
     },
   ],
 };
@@ -82,7 +91,11 @@ export function getGameUrl(game) {
   }
   const basePath = loc.pathname.replace(/\/$/, '');
   const subfolder = game.id === 'bulbrush' ? 'bulb' : game.id;
-  return `${loc.origin}${basePath}/${subfolder}/`;
+  // keep ?device=... so the emulator chosen in the lobby is also used inside the game, and add autoxr=1 so the game
+  // re-enters VR on its own (leaving the lobby page ends the VR session, so without it the game opens on a flat preview)
+  const params = new URLSearchParams(loc.search);
+  params.set('autoxr', '1');
+  return `${loc.origin}${basePath}/${subfolder}/?${params.toString()}`;
 }
 
 // The saved best score, as shown on a tile, or null when this browser has none to show.
