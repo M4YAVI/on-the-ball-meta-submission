@@ -12,8 +12,11 @@
     "reference:warmup": "iwsdk reference warmup",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"tests/**/*.test.mjs\"",
-    "test:baseline": "node handoff-baseline/tests.mjs"
+    "test": "node --test \"tests/**/*.test.mjs\" \"football/tests/**/*.test.mjs\"",
+    "test:baseline": "node handoff-baseline/tests.mjs",
+    "dev:football": "vite --config football/vite.config.js football",
+    "build:football": "vite build --config football/vite.config.js football",
+    "test:football": "node --test football/tests/football.test.mjs"
   },
   "dependencies": {
     "@iwsdk/core": "1.1.0",
