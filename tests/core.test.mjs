@@ -1,0 +1,421 @@
+// Unit and adversarial tests for the pure game logic. Run with: npm test
+// Test ids (T01..T24) refer to docs/TEST-AND-ACCEPTANCE.md.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { Trial, angle, tally, STATUS, SAMPLE } from '../src/core/engine.js';
+import { GazeVerdict, VERDICT, CalibrationCheck, CAL } from '../src/core/gaze-verdict.js';
+import { ballPosition, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, FOV, PATH } from '../src/core/ball-path.js';
+import { GameFlow, PHASE, MODE } from '../src/core/flow.js';
+import { HistoryStore, HISTORY_KEY } from '../src/core/history.js';
+
+// A flight of `ms` with a sample every 20 ms; fn(trial, t) decides each sample.
+function run(fn, mode = 'eye', ms = 1000) {
+  const x = new Trial(mode, ms);
+  for (let t = 0; t <= ms; t += 20) fn(x, t);
+  return x.finish();
+}
+const seeded = (seed = 1) => () => {
+  seed = (seed * 16807) % 2147483647;
+  return seed / 2147483647;
+};
+
+// ---------------------------------------------------------------- baseline behaviour, kept (T01)
+test('aligned gaze is green', () => assert.equal(run((x, t) => x.sample(t, 0, 'eye')).status, STATUS.GREEN));
+test('late acquisition is amber', () =>
+  assert.equal(run((x, t) => x.sample(t, t < 400 ? 20 : 0, 'eye')).status, STATUS.AMBER));
+test('looking away is red', () => assert.equal(run((x, t) => x.sample(t, 30, 'eye')).status, STATUS.RED));
+test('missing gaze is unscored, not red (T07)', () => {
+  const r = run((x, t) => x.sample(t, 0, 'eye', false));
+  assert.equal(r.status, STATUS.UNSCORED);
+  assert.equal(r.reason, 'insufficient-tracking');
+});
+test('head data in an eye trial is rejected (no silent head-as-eye)', () =>
+  assert.equal(run((x, t) => x.sample(t, 0, 'head')).status, STATUS.UNSCORED));
+test('NaN injection is unscored (T10)', () => assert.equal(run((x, t) => x.sample(t, NaN, 'eye')).status, STATUS.UNSCORED));
+test('replayed timestamps are unscored (T11)', () => assert.equal(run((x) => x.sample(0, 0, 'eye')).status, STATUS.UNSCORED));
+test('large gaps are unscored', () => {
+  const x = new Trial('eye', 1000);
+  for (let t = 0; t <= 1000; t += 200) x.sample(t, 0, 'eye');
+  assert.equal(x.finish().status, STATUS.UNSCORED);
+});
+test('a short dropout (blink) is tolerated (T07)', () =>
+  assert.equal(run((x, t) => x.sample(t, 0, 'eye', t < 400 || t > 500)).status, STATUS.GREEN));
+test('angle: zero vector and malformed input give NaN', () => {
+  assert.ok(Number.isNaN(angle([0, 0, 0], [1, 0, 0])));
+  assert.ok(Number.isNaN(angle([1, 0], [1, 0, 0])));
+  assert.ok(Number.isNaN(angle(null, [1, 0, 0])));
+  assert.ok(Number.isNaN(angle([Infinity, 0, 0], [1, 0, 0])));
+});
+test('angle: orthogonal vectors are 90 degrees', () => assert.equal(angle([1, 0, 0], [0, 1, 0]), 90));
+test('a finished trial is immutable', () => {
+  const x = new Trial('eye');
+  const a = x.finish();
+  assert.equal(x.sample(10, 0, 'eye'), SAMPLE.CLOSED);
+  assert.equal(x.samples, 0);
+  assert.equal(x.finish(), a);
+});
+
+// ---------------------------------------------------------------- T09: the interval-accounting fix
+test('T09: an interval that touches an invalid sample is not credited', () => {
+  const x = new Trial('eye', 1000);
+  x.sample(0, 0, 'eye'); // good (baseline)
+  x.sample(20, 0, 'eye', false); // invalid
+  x.sample(40, 0, 'eye'); // good, but the sample before it was invalid: no interval
+  x.sample(60, 0, 'eye'); // good: 40 -> 60 is the only credited interval
+  assert.equal(x.valid, 20);
+});
+test('T09: alternating valid/invalid samples earn no credit', () => {
+  const r = run((x, t) => x.sample(t, 0, 'eye', (t / 20) % 2 === 0));
+  assert.equal(r.validMs, 0);
+  assert.equal(r.status, STATUS.UNSCORED);
+});
+test('T09: an interval longer than the gap limit is not credited, the next one is', () => {
+  const x = new Trial('eye', 1000);
+  assert.equal(x.sample(0, 0, 'eye'), SAMPLE.BASELINE);
+  assert.equal(x.sample(500, 0, 'eye'), SAMPLE.GAP);
+  assert.equal(x.sample(520, 0, 'eye'), SAMPLE.OK);
+  assert.equal(x.valid, 20);
+});
+test('T09: the baseline bug is gone: a blink costs exactly its own time plus one interval', () => {
+  const r = run((x, t) => x.sample(t, 0, 'eye', t < 400 || t > 500));
+  // good samples 0..380 (380 ms) and 520..1000 (480 ms), nothing across the 400..500 hole or its two edges
+  assert.equal(r.validMs, 860);
+});
+
+// ---------------------------------------------------------------- T10, T11 malformed input
+test('T10: bad values are rejected and counted, never scored', () => {
+  const x = new Trial('eye', 1000);
+  assert.equal(x.sample(0, Infinity, 'eye'), SAMPLE.INVALID);
+  assert.equal(x.sample(20, -1, 'eye'), SAMPLE.INVALID);
+  assert.equal(x.sample(40, 181, 'eye'), SAMPLE.INVALID);
+  assert.equal(x.sample(60, 0, 'simulated'), SAMPLE.INVALID);
+  assert.equal(x.sample(80, 0, 'eye', 'yes'), SAMPLE.INVALID); // only literal true is accepted
+  assert.equal(x.valid, 0);
+});
+test('T11: duplicate, out-of-order, negative, future and non-finite times are rejected', () => {
+  const x = new Trial('eye', 1000);
+  assert.equal(x.sample(100, 0, 'eye'), SAMPLE.BASELINE);
+  assert.equal(x.sample(100, 0, 'eye'), SAMPLE.OUT_OF_ORDER);
+  assert.equal(x.sample(50, 0, 'eye'), SAMPLE.OUT_OF_ORDER);
+  assert.equal(x.sample(-5, 0, 'eye'), SAMPLE.BAD_TIME);
+  assert.equal(x.sample(1001, 0, 'eye'), SAMPLE.BAD_TIME);
+  assert.equal(x.sample(NaN, 0, 'eye'), SAMPLE.BAD_TIME);
+  assert.equal(x.sample(Infinity, 0, 'eye'), SAMPLE.BAD_TIME);
+  assert.equal(x.sample('50', 0, 'eye'), SAMPLE.BAD_TIME);
+  assert.equal(x.valid, 0);
+});
+test('trial constructor validates duration, tolerance and mode', () => {
+  assert.throws(() => new Trial('eye', 0));
+  assert.throws(() => new Trial('eye', NaN));
+  assert.throws(() => new Trial('eye', 1000, 0));
+  assert.throws(() => new Trial('eye', 1000, 200));
+  assert.throws(() => new Trial(''));
+  assert.throws(() => new Trial(undefined));
+});
+test('quality threshold: 75% tracked is scored, less is unscored', () => {
+  const at = (cutoff) => {
+    const x = new Trial('eye', 1000);
+    for (let t = 0; t <= 1000; t += 10) x.sample(t, 0, 'eye', t <= cutoff);
+    return x.finish().status;
+  };
+  assert.equal(at(750), STATUS.GREEN);
+  assert.equal(at(740), STATUS.UNSCORED);
+});
+test('tally counts unscored separately from red', () => {
+  assert.deepEqual(tally(['green', 'green', 'amber', 'red', 'unscored', 'bogus']), {
+    total: 5,
+    green: 2,
+    amber: 1,
+    red: 1,
+    unscored: 1,
+  });
+});
+test('T15: a perfect scripted ray scores green, and nothing marks a score as verified', () => {
+  // Practice scores are forgeable client-side. The engine must not claim otherwise.
+  const r = run((x, t) => x.sample(t, 0, 'eye'));
+  assert.equal(r.status, STATUS.GREEN);
+  assert.ok(!('verified' in r));
+});
+
+// ---------------------------------------------------------------- real eye versus head-locked gaze
+const dirYaw = (deg) => [Math.sin((deg * Math.PI) / 180), 0, -Math.cos((deg * Math.PI) / 180)];
+const HEAD = [0, 0, -1];
+
+test('GazeVerdict: gaze that separates from the head is independent', () => {
+  const g = new GazeVerdict();
+  for (let i = 0; i < 100; i++) g.update(i / 30, dirYaw(i % 2 ? 4 : 0), HEAD, true);
+  assert.equal(g.verdict, VERDICT.EYE);
+});
+test('GazeVerdict: gaze identical to the head for 3 s is head-locked', () => {
+  const g = new GazeVerdict();
+  for (let i = 0; i < 130; i++) g.update(i / 30, HEAD, HEAD, true);
+  assert.equal(g.verdict, VERDICT.HEAD_LOCKED);
+});
+test('GazeVerdict: not enough evidence stays unknown, and a missing gaze pose is no-gaze', () => {
+  const g = new GazeVerdict();
+  for (let i = 0; i < 30; i++) g.update(i / 30, HEAD, HEAD, true);
+  assert.equal(g.verdict, VERDICT.UNKNOWN);
+  const n = new GazeVerdict();
+  for (let i = 0; i < 100; i++) n.update(i / 30, null, HEAD, false);
+  assert.equal(n.verdict, VERDICT.NO_GAZE);
+});
+
+function calibrate({ eye, head, tracked = () => true, ms = 40000, step = 16 }) {
+  const c = new CalibrationCheck({ targets: [{ id: 'left', dir: dirYaw(-14) }, { id: 'right', dir: dirYaw(14) }] });
+  c.start(0, HEAD);
+  let last;
+  for (let t = 0; t < ms && c.status === CAL.RUNNING; t += step) last = c.sample(t, eye(t, c), head(t), tracked(t));
+  return { c, last };
+}
+const lookAtTarget = (t, c) => c.targets[c.targetIndex]?.dir ?? HEAD;
+
+test('calibration: head still, eyes move to the left then right dot: passes', () => {
+  const { c } = calibrate({ eye: lookAtTarget, head: () => HEAD });
+  assert.equal(c.status, CAL.PASSED);
+});
+test('calibration: a gaze ray that follows the head fails (head-locked runtime)', () => {
+  // Gaze = head. The player holds still, so the gaze never leaves the centre.
+  const { c } = calibrate({ eye: () => HEAD, head: () => HEAD });
+  assert.equal(c.status, CAL.FAILED);
+  assert.equal(c.reason, 'off-target');
+});
+test('calibration: turning the head instead of the eyes fails', () => {
+  // The player turns the whole head toward the dot and gaze rides along with it.
+  const { c } = calibrate({
+    eye: (t, cc) => cc.targets[cc.targetIndex].dir,
+    head: (t) => dirYaw(-14),
+  });
+  assert.equal(c.status, CAL.FAILED);
+  assert.equal(c.reason, 'head-moved');
+});
+test('calibration: no gaze pose fails with a clear reason', () => {
+  const { c } = calibrate({ eye: () => null, head: () => HEAD, tracked: () => false });
+  assert.equal(c.status, CAL.FAILED);
+  assert.equal(c.reason, 'no-gaze');
+});
+test('calibration: looking at the dot only briefly does not pass', () => {
+  const { c } = calibrate({ eye: (t) => (t % 400 < 200 ? dirYaw(-14) : HEAD), head: () => HEAD });
+  assert.notEqual(c.status, CAL.PASSED);
+});
+
+// ---------------------------------------------------------------- the ball path fits the glasses' view
+test('every delivery stays inside the Meta VR Glasses view with margin', () => {
+  const rng = seeded(7);
+  for (let n = 0; n < 200; n++) {
+    const lane = [-1, 0, 1][Math.floor(rng() * 3)];
+    const curve = (rng() * 2 - 1) * PATH.maxCurveM;
+    assert.ok(pathFitsView(lane, curve, 5), `lane ${lane} curve ${curve} leaves the view`);
+  }
+});
+test('the baseline end point (x = 1.7 m at 2 m) would have left the view', () => {
+  const a = viewAngles([1.7, 0, -2]);
+  assert.ok(a.horizontal > FOV.right, `expected > ${FOV.right}, got ${a.horizontal}`);
+});
+test('path starts at the bowler, ends well short of the player, never touches the viewer', () => {
+  assert.ok(Math.abs(ballPosition(0, 0, 0)[2] - PATH.releaseZ) < 1e-9);
+  assert.ok(Math.abs(ballPosition(1, 0, 0)[2] - PATH.endZ) < 1e-9);
+  for (let i = 0; i <= 100; i++) assert.ok(-ballPosition(i / 100, 1, 0.2)[2] >= 2.5);
+});
+test('left and right lanes end on opposite sides; bad inputs are clamped, not NaN', () => {
+  assert.ok(ballPosition(1, -1, 0)[0] < 0);
+  assert.ok(ballPosition(1, 1, 0)[0] > 0);
+  assert.equal(ballPosition(1, 0, 0)[0], 0);
+  const p = ballPosition(NaN, 99, Infinity);
+  assert.ok(p.every(Number.isFinite));
+});
+test('the ball bounces: lowest point is on the pitch side, then it rises', () => {
+  assert.ok(ballPosition(PATH.bounceAt, 0, 0)[1] < ballPosition(0, 0, 0)[1]);
+  assert.ok(ballPosition(1, 0, 0)[1] > ballPosition(PATH.bounceAt, 0, 0)[1]);
+});
+test('the drawn ball never shrinks below a followable size', () => {
+  const far = drawnRadius(18);
+  assert.ok((Math.atan(far / 18) * 180) / Math.PI >= 0.89);
+  assert.equal(drawnRadius(0.2), 0.036); // near the player it is the real size
+  assert.ok(ringRadius(10) > drawnRadius(10));
+});
+test('deliveries: 20 balanced, shuffled, within the swing limit, repeatable from a seed', () => {
+  const d = makeDeliveries(20, seeded(3));
+  assert.equal(d.length, 20);
+  const n = (l) => d.filter((x) => x.lane === l).length;
+  assert.ok(n(-1) >= 6 && n(0) >= 6 && n(1) >= 6);
+  assert.ok(d.every((x) => Math.abs(x.curve) <= PATH.maxCurveM));
+  assert.deepEqual(makeDeliveries(20, seeded(3)), d);
+  assert.notDeepEqual(makeDeliveries(20, seeded(4)), d);
+});
+
+// ---------------------------------------------------------------- the session state machine
+function ready(mode = MODE.HEAD) {
+  const f = new GameFlow({ total: 20, rng: seeded(11) });
+  assert.ok(f.selectSport('cricket'));
+  assert.ok(f.chooseMode(mode, { calibrated: mode === MODE.EYE }));
+  return f;
+}
+const green = { status: STATUS.GREEN, quality: 1, coverage: 1 };
+
+test('only cricket can be selected in this build', () => {
+  const f = new GameFlow();
+  assert.equal(f.selectSport('tennis'), false);
+  assert.equal(f.selectSport('nonsense'), false);
+  assert.equal(f.phase, PHASE.SPORT);
+  assert.equal(f.selectSport('cricket'), true);
+});
+test('eye mode cannot be chosen without a passed calibration; head mode is explicit', () => {
+  const f = new GameFlow();
+  f.selectSport('cricket');
+  assert.equal(f.chooseMode(MODE.EYE, { calibrated: false }), false);
+  assert.equal(f.phase, PHASE.MODE);
+  assert.equal(f.chooseMode('mystery'), false);
+  assert.equal(f.chooseMode(MODE.HEAD), true);
+  assert.equal(f.mode, MODE.HEAD);
+});
+test('a warm-up ball is not scored, then exactly 20 balls end on the scorecard', () => {
+  const f = ready();
+  let b = f.beginBall(1000);
+  assert.equal(b.warmup, true);
+  assert.equal(f.completeBall(green).warmup, true);
+  assert.equal(f.results.length, 0);
+  for (let i = 0; i < 20; i++) {
+    b = f.beginBall(1000 + i);
+    assert.equal(b.warmup, false);
+    assert.equal(b.index, i);
+    assert.ok(f.completeBall(green, 70000));
+  }
+  assert.equal(f.phase, PHASE.SCORECARD);
+  assert.ok(f.complete);
+  assert.equal(f.results.length, 20);
+  assert.equal(f.beginBall(), null); // nothing more to play
+  assert.equal(f.completeBall(green), null); // a late event cannot add a 21st ball
+});
+test('T13: an interrupted ball is discarded and replayed, never scored as a miss', () => {
+  const f = ready();
+  f.skipWarmup();
+  f.beginBall(0);
+  f.completeBall(green);
+  const second = f.beginBall(1); // ball index 1 in flight
+  assert.equal(f.interrupt(), true); // headset taken off, page hidden, session ended...
+  assert.equal(f.phase, PHASE.PAUSED);
+  assert.equal(f.results.length, 1);
+  assert.equal(f.interruptions, 1);
+  assert.equal(f.resume(), true);
+  const again = f.beginBall(2);
+  assert.equal(again.index, second.index);
+  assert.deepEqual(again.delivery, second.delivery); // the same delivery
+  assert.equal(f.results.length, 1);
+});
+test('T14: pinch spam does nothing the second time', () => {
+  const f = ready();
+  f.skipWarmup();
+  assert.ok(f.beginBall(0));
+  assert.equal(f.beginBall(0), null); // already playing
+  assert.ok(f.completeBall(green));
+  assert.equal(f.completeBall(green), null); // not playing any more: no double count
+  assert.equal(f.results.length, 1);
+  assert.equal(f.pause(), true);
+  assert.equal(f.pause(), false);
+  assert.equal(f.resume(), true);
+  assert.equal(f.resume(), false);
+  const s = new GameFlow();
+  assert.equal(s.selectSport('cricket'), true);
+  assert.equal(s.selectSport('cricket'), false);
+});
+test('unknown or hostile results are stored as unscored, not trusted', () => {
+  const f = ready();
+  f.skipWarmup();
+  f.beginBall(0);
+  assert.equal(f.completeBall({ status: 'perfect!!' }).status, STATUS.UNSCORED);
+  f.beginBall(1);
+  assert.equal(f.completeBall(null).status, STATUS.UNSCORED);
+});
+test('retry restarts the 20 with the same mode; exit returns to the picker and forgets the run', () => {
+  const f = ready(MODE.EYE);
+  f.skipWarmup();
+  for (let i = 0; i < 20; i++) {
+    f.beginBall(i);
+    f.completeBall(green, 1000);
+  }
+  assert.equal(f.retry(), true);
+  assert.equal(f.phase, PHASE.READY);
+  assert.equal(f.results.length, 0);
+  assert.equal(f.mode, MODE.EYE);
+  assert.equal(f.exit(), true);
+  assert.equal(f.phase, PHASE.SPORT);
+  assert.equal(f.mode, null);
+});
+test('counts and minutes come from the recorded balls', () => {
+  const f = ready();
+  f.skipWarmup();
+  const seq = ['green', 'green', 'amber', 'red', 'unscored'];
+  for (let i = 0; i < 20; i++) {
+    f.beginBall(60000);
+    f.completeBall({ status: seq[i % 5] }, 60000 + 9 * 60000);
+  }
+  assert.deepEqual(f.counts(), { total: 20, green: 8, amber: 4, red: 4, unscored: 4 });
+  assert.equal(f.minutes(), 9);
+});
+
+// ---------------------------------------------------------------- local history (T16, T21)
+function fakeStorage(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => void m.set(k, v),
+    removeItem: (k) => void m.delete(k),
+    dump: () => m,
+  };
+}
+const session = (over = {}) => ({
+  sport: 'cricket',
+  source: 'head',
+  results: Array(20).fill('green'),
+  minutes: 9,
+  ts: 1000,
+  ...over,
+});
+
+test('history saves totals only: no gaze data can reach storage (T21)', () => {
+  const st = fakeStorage();
+  const h = new HistoryStore(st);
+  const withExtras = { ...session(), gaze: [[0, 0, -1]], samples: [1, 2, 3], eyeImage: 'x' };
+  const saved = h.add(withExtras);
+  assert.deepEqual(Object.keys(saved).sort(), ['minutes', 'practice', 'results', 'source', 'sport', 'ts']);
+  assert.ok(!st.getItem(HISTORY_KEY).includes('gaze'));
+  assert.equal(saved.practice, true);
+});
+test('T16: corrupt, wrong-shaped or hostile storage is discarded without a crash', () => {
+  for (const bad of ['{not json', '{"a":1}', '"str"', 'null', JSON.stringify([{ sport: 1 }]), 'x'.repeat(300000)]) {
+    const h = new HistoryStore(fakeStorage({ [HISTORY_KEY]: bad }));
+    assert.deepEqual(h.load(), []);
+    assert.ok(h.add(session())); // and it still works afterwards
+  }
+});
+test('T16: edited entries with impossible values are dropped, valid ones kept', () => {
+  const good = { ...session(), practice: true };
+  const edited = { ...good, results: Array(20).fill('green').fill('legend', 3, 4) };
+  const h = new HistoryStore(fakeStorage({ [HISTORY_KEY]: JSON.stringify([good, edited]) }));
+  assert.equal(h.load().length, 1);
+});
+test('T16: blocked or full storage keeps the session in memory and reports it', () => {
+  const full = { getItem: () => null, setItem: () => { throw new Error('quota'); }, removeItem: () => {} };
+  const h = new HistoryStore(full);
+  assert.ok(h.add(session()));
+  assert.equal(h.lastError, 'storage-write-failed');
+  assert.equal(h.load().length, 1);
+  const blocked = { getItem: () => { throw new Error('denied'); }, setItem: () => {}, removeItem: () => {} };
+  assert.doesNotThrow(() => new HistoryStore(blocked).load());
+  assert.doesNotThrow(() => new HistoryStore(null).add(session()));
+});
+test('history rejects invalid sessions, caps its size, lists newest first, and can be deleted', () => {
+  const h = new HistoryStore(fakeStorage());
+  assert.equal(h.add(session({ results: ['green'] })), null);
+  assert.equal(h.add(session({ source: 'telepathy' })), null);
+  assert.equal(h.add(session({ minutes: -4 })), null);
+  for (let i = 0; i < 60; i++) h.add(session({ ts: i, results: Array(20).fill(i % 2 ? 'red' : 'green') }));
+  assert.equal(h.load().length, 50);
+  const r = h.recent('cricket', 2);
+  assert.equal(r.length, 2);
+  assert.ok(r[0].ts > r[1].ts);
+  assert.ok(JSON.parse(h.exportJson()).length === 50);
+  h.clear();
+  assert.deepEqual(h.load(), []);
+});
