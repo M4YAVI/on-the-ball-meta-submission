@@ -77,6 +77,14 @@ export class GameFlow {
     return true;
   }
 
+  // From the ready screen back to the mode choice (e.g. to switch from head mode to eye mode).
+  changeMode() {
+    if (this.phase !== PHASE.READY) return false;
+    this.mode = null;
+    this.phase = PHASE.MODE;
+    return true;
+  }
+
   beginCalibration() {
     if (this.phase !== PHASE.MODE) return false;
     this.phase = PHASE.CALIBRATING;
@@ -187,8 +195,9 @@ export class GameFlow {
     return tally(this.results.map((r) => r.status));
   }
 
+  // Minutes spent, to one decimal (a 70-second session is 1.2, not a rounded-up "9" or a rounded-down "1").
   minutes() {
     if (this.startedAt === null || this.finishedAt === null) return 0;
-    return Math.max(0, Math.round((this.finishedAt - this.startedAt) / 60000));
+    return Math.max(0, Math.round((this.finishedAt - this.startedAt) / 6000) / 10);
   }
 }

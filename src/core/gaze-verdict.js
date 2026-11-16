@@ -81,9 +81,9 @@ export class CalibrationCheck {
   // targets: [{ id, dir:[x,y,z] }] in world space, shown to the player one after another.
   constructor({
     targets,
-    dwellMs = 500, // how long the eyes must stay on a target
+    dwellMs = 400, // how long the eyes must stay on a target (short: holding a stare is tiring)
     timeoutMs = 15000, // per target
-    aimTolDeg = 5, // eyes within this of the target count as looking at it
+    aimTolDeg = 6, // eyes within this of the target count as looking at it (Meta: eye signals are noisy, use a generous cone)
     headDriftDeg = 4, // the head may not turn more than this from where it started
     minSeparationDeg = 6, // and the eyes must be at least this far from the head direction
   }) {

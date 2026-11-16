@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 import { Trial, angle, tally, STATUS, SAMPLE } from '../src/core/engine.js';
 import { GazeVerdict, VERDICT, CalibrationCheck, CAL } from '../src/core/gaze-verdict.js';
-import { ballPosition, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, FOV, PATH } from '../src/core/ball-path.js';
+import { ballPosition, bounceT, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, flight, flightMs, FIELD, FOV, PATH, PHYS, SPEED_OPTIONS } from '../src/core/ball-path.js';
 import { GameFlow, PHASE, MODE } from '../src/core/flow.js';
 import { HistoryStore, HISTORY_KEY } from '../src/core/history.js';
 
@@ -24,6 +24,21 @@ const seeded = (seed = 1) => () => {
 test('aligned gaze is green', () => assert.equal(run((x, t) => x.sample(t, 0, 'eye')).status, STATUS.GREEN));
 test('late acquisition is amber', () =>
   assert.equal(run((x, t) => x.sample(t, t < 400 ? 20 : 0, 'eye')).status, STATUS.AMBER));
+test('deck rule "eyes stayed on the ball until it arrived": leaving it just before arrival is amber, not green', () => {
+  const r = run((x, t) => x.sample(t, t < 860 ? 0 : 30, 'eye'));
+  assert.ok(r.coverage >= 0.8, 'coverage alone would have been green');
+  assert.equal(r.status, STATUS.AMBER);
+  assert.equal(r.reason, 'left-early');
+});
+test('a blink right at arrival does not cost the green (sensor gap is not a miss)', () => {
+  const r = run((x, t) => x.sample(t, 0, 'eye', !(t > 900 && t < 1000)));
+  assert.equal(r.status, STATUS.GREEN);
+  assert.equal(r.arrival, null);
+});
+test('late acquisition says late, looking away says looked-away', () => {
+  assert.equal(run((x, t) => x.sample(t, t < 400 ? 30 : 0, 'eye')).reason, 'late');
+  assert.equal(run((x, t) => x.sample(t, 30, 'eye')).reason, 'looked-away');
+});
 test('looking away is red', () => assert.equal(run((x, t) => x.sample(t, 30, 'eye')).status, STATUS.RED));
 test('missing gaze is unscored, not red (T07)', () => {
   const r = run((x, t) => x.sample(t, 0, 'eye', false));
@@ -212,10 +227,31 @@ test('the baseline end point (x = 1.7 m at 2 m) would have left the view', () =>
   const a = viewAngles([1.7, 0, -2]);
   assert.ok(a.horizontal > FOV.right, `expected > ${FOV.right}, got ${a.horizontal}`);
 });
-test('path starts at the bowler, ends well short of the player, never touches the viewer', () => {
+test('batsman view: the player stands at the crease with their own stumps behind them, not in front (keeper view)', () => {
+  assert.ok(FIELD.batsmanStumpsZ > 0, "the batsman's stumps must be behind the eyes");
+  assert.ok(FIELD.battingCreaseZ < 0 && FIELD.battingCreaseZ > -1, 'the crease is just in front of the feet');
+  assert.ok(Math.abs(FIELD.batsmanStumpsZ - FIELD.bowlerStumpsZ - 20.12) < 0.05, '22 yards between the stumps');
+  assert.ok(FIELD.bowlerZ > FIELD.bowlerStumpsZ && FIELD.bowlerZ < PATH.releaseZ + 1, 'the bowler releases near the far crease');
+});
+test('path starts at the bowler, comes all the way to the batsman, never touches the face', () => {
   assert.ok(Math.abs(ballPosition(0, 0, 0)[2] - PATH.releaseZ) < 1e-9);
   assert.ok(Math.abs(ballPosition(1, 0, 0)[2] - PATH.endZ) < 1e-9);
-  for (let i = 0; i <= 100; i++) assert.ok(-ballPosition(i / 100, 1, 0.2)[2] >= 2.5);
+  assert.ok(-PATH.endZ <= 1.5, 'the ball arrives at the bat, not 2.6 m away');
+  assert.ok(PATH.endZ < FIELD.battingCreaseZ, 'it arrives in front of the crease');
+  for (let i = 0; i <= 100; i++) assert.ok(-ballPosition(i / 100, 1, 0.2)[2] >= 1.15);
+  assert.ok(ballPosition(1, 0, 0)[1] < -0.3, 'it arrives below the eyes, around waist height');
+});
+test('a side delivery ends far enough to the side that a straight head misses it but eyes can follow (the eye-tracking case)', () => {
+  for (const lane of [-1, 1]) {
+    const a = viewAngles(ballPosition(1, lane, 0));
+    assert.ok(Math.abs(a.horizontal) > 7 * 2, `lane ${lane} ends at ${a.horizontal} deg`);
+  }
+});
+test('the ball pitches on a length in front of the batsman; full balls pitch closer than short ones', () => {
+  const zAt = (len) => ballPosition(bounceT(len), 0, 0, len)[2];
+  assert.ok(zAt(0) > -7 && zAt(0) < -3.5, `good length pitches at ${zAt(0)}`);
+  assert.ok(zAt(1) > zAt(-1));
+  for (const len of [-1, 0, 1]) assert.ok(pathFitsView(1, PATH.maxCurveM, 5, 120, len) && pathFitsView(-1, -PATH.maxCurveM, 5, 120, len));
 });
 test('left and right lanes end on opposite sides; bad inputs are clamped, not NaN', () => {
   assert.ok(ballPosition(1, -1, 0)[0] < 0);
@@ -225,8 +261,43 @@ test('left and right lanes end on opposite sides; bad inputs are clamped, not Na
   assert.ok(p.every(Number.isFinite));
 });
 test('the ball bounces: lowest point is on the pitch side, then it rises', () => {
-  assert.ok(ballPosition(PATH.bounceAt, 0, 0)[1] < ballPosition(0, 0, 0)[1]);
-  assert.ok(ballPosition(1, 0, 0)[1] > ballPosition(PATH.bounceAt, 0, 0)[1]);
+  assert.ok(ballPosition(bounceT(0), 0, 0)[1] < ballPosition(0, 0, 0)[1]);
+  assert.ok(ballPosition(1, 0, 0)[1] > ballPosition(bounceT(0), 0, 0)[1]);
+});
+test('the ball bounces off the pitch for every length', () => {
+  for (const len of [-1, 0, 1]) {
+    const b = bounceT(len);
+    assert.ok(ballPosition(b, 0, 0, len)[1] <= ballPosition(b - 0.05, 0, 0, len)[1]);
+    assert.ok(ballPosition(b + 0.05, 0, 0, len)[1] > ballPosition(b, 0, 0, len)[1]);
+  }
+});
+test('real ball flight: 140 km/h is the half-second ball, slower balls take longer, every speed and length stays in view', () => {
+  const fast = flightMs(0, 140);
+  assert.ok(fast > 430 && fast < 530, `140 km/h takes ${fast} ms`);
+  let prev = 0;
+  for (const s of [...SPEED_OPTIONS].sort((a, b) => b.kmh - a.kmh)) {
+    const ms = flightMs(0, s.kmh);
+    assert.ok(ms > prev, `${s.id} must take longer than a faster ball`);
+    prev = ms;
+    for (const len of [-1, 0, 1]) {
+      for (const lane of [-1, 0, 1]) {
+        assert.ok(pathFitsView(lane, lane * PATH.maxCurveM, 5, 120, len, s.kmh), `${s.id} lane ${lane} length ${len} leaves the view`);
+        assert.ok(pathFitsView(lane, -lane * PATH.maxCurveM, 5, 120, len, s.kmh));
+      }
+      const end = ballPosition(1, 0, 0, len, s.kmh);
+      assert.ok(end[1] < -0.3 && end[1] > FIELD.ground, `${s.id} length ${len} arrives at ${end[1]}`);
+    }
+  }
+});
+test('real ball flight: the ball slows in the air and on the bounce, and comes off the pitch slower than it went in', () => {
+  const f = flight(0, 140);
+  assert.ok(f.vb < f.v0, 'air drag slows it before it pitches');
+  assert.ok(f.v1 < f.vb, 'it loses pace on the pitch');
+  assert.ok(f.vEnd > 0.7 * f.v0 && f.vEnd < f.v0, 'but it still arrives quick');
+  assert.ok(f.vy1 > 0 && f.vy1 < -(f.vy0 - PHYS.g * f.t1), 'it bounces up, with less vertical speed than it came down with');
+  const atBounce = ballPosition(bounceT(0, 140), 0, 0, 0, 140);
+  assert.ok(Math.abs(atBounce[1] - (FIELD.ground + PHYS.ballRadius)) < 1e-6, 'it touches the pitch surface');
+  assert.ok(Math.abs(atBounce[2] - f.zb) < 1e-6);
 });
 test('the drawn ball never shrinks below a followable size', () => {
   const far = drawnRadius(18);
@@ -240,6 +311,7 @@ test('deliveries: 20 balanced, shuffled, within the swing limit, repeatable from
   const n = (l) => d.filter((x) => x.lane === l).length;
   assert.ok(n(-1) >= 6 && n(0) >= 6 && n(1) >= 6);
   assert.ok(d.every((x) => Math.abs(x.curve) <= PATH.maxCurveM));
+  assert.ok(d.every((x) => x.length >= -1 && x.length <= 1));
   assert.deepEqual(makeDeliveries(20, seeded(3)), d);
   assert.notDeepEqual(makeDeliveries(20, seeded(4)), d);
 });
@@ -327,6 +399,13 @@ test('unknown or hostile results are stored as unscored, not trusted', () => {
   f.beginBall(1);
   assert.equal(f.completeBall(null).status, STATUS.UNSCORED);
 });
+test('change mode goes back from ready to the mode choice', () => {
+  const f = ready(MODE.HEAD);
+  assert.equal(f.changeMode(), true);
+  assert.equal(f.phase, PHASE.MODE);
+  assert.equal(f.mode, null);
+  assert.equal(f.changeMode(), false);
+});
 test('retry restarts the 20 with the same mode; exit returns to the picker and forgets the run', () => {
   const f = ready(MODE.EYE);
   f.skipWarmup();
@@ -352,6 +431,13 @@ test('counts and minutes come from the recorded balls', () => {
   }
   assert.deepEqual(f.counts(), { total: 20, green: 8, amber: 4, red: 4, unscored: 4 });
   assert.equal(f.minutes(), 9);
+  const short = ready();
+  short.skipWarmup();
+  short.beginBall(0);
+  short.completeBall({ status: 'green' }, 70000);
+  short.startedAt = 0;
+  short.finishedAt = 72000;
+  assert.equal(short.minutes(), 1.2); // a 72-second session is 1.2 minutes, not a rounded-up 9
 });
 
 // ---------------------------------------------------------------- local history (T16, T21)
@@ -378,7 +464,7 @@ test('history saves totals only: no gaze data can reach storage (T21)', () => {
   const h = new HistoryStore(st);
   const withExtras = { ...session(), gaze: [[0, 0, -1]], samples: [1, 2, 3], eyeImage: 'x' };
   const saved = h.add(withExtras);
-  assert.deepEqual(Object.keys(saved).sort(), ['minutes', 'practice', 'results', 'source', 'sport', 'ts']);
+  assert.deepEqual(Object.keys(saved).sort(), ['minutes', 'practice', 'results', 'source', 'speed', 'sport', 'ts']);
   assert.ok(!st.getItem(HISTORY_KEY).includes('gaze'));
   assert.equal(saved.practice, true);
 });
@@ -410,6 +496,7 @@ test('history rejects invalid sessions, caps its size, lists newest first, and c
   assert.equal(h.add(session({ results: ['green'] })), null);
   assert.equal(h.add(session({ source: 'telepathy' })), null);
   assert.equal(h.add(session({ minutes: -4 })), null);
+  assert.equal(h.add(session({ speed: 'warp' })).speed, 'spin'); // unknown speed falls back, never stored raw
   for (let i = 0; i < 60; i++) h.add(session({ ts: i, results: Array(20).fill(i % 2 ? 'red' : 'green') }));
   assert.equal(h.load().length, 50);
   const r = h.recent('cricket', 2);

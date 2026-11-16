@@ -11,6 +11,9 @@ import { tally, STATUS } from './engine.js';
 const KEY = 'otb.sessions.v1';
 const MAX_SESSIONS = 50;
 const SOURCES = ['eye', 'head', 'simulated'];
+// release speed of each delivery (ids from SPEED_OPTIONS in ball-path.js; calm / normal / pro are from earlier builds and stay
+// readable). Scores at different speeds are not comparable.
+export const SPEEDS = ['gentle', 'spin', 'medium', 'fast', 'calm', 'normal', 'pro'];
 const STATUSES = Object.values(STATUS);
 
 function validSession(s) {
@@ -22,6 +25,7 @@ function validSession(s) {
     s.sport.length <= 24 &&
     Number.isFinite(s.ts) &&
     SOURCES.includes(s.source) &&
+    (s.speed === undefined || SPEEDS.includes(s.speed)) &&
     Array.isArray(s.results) &&
     s.results.length === 20 &&
     s.results.every((r) => STATUSES.includes(r)) &&
@@ -75,6 +79,7 @@ export class HistoryStore {
       sport: session?.sport,
       ts: Number.isFinite(session?.ts) ? session.ts : Date.now(),
       source: session?.source,
+      speed: SPEEDS.includes(session?.speed) ? session.speed : 'spin',
       results: Array.isArray(session?.results) ? session.results.slice(0, 20) : [],
       minutes: session?.minutes,
       practice: true,

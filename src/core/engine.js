@@ -3,12 +3,16 @@
 // Ported from the VEGAH handoff baseline (handoff-baseline/engine.mjs, tag v0.1) with the scoring rules unchanged:
 //   - a delivery needs at least 75% valid tracking time, otherwise it is UNSCORED (a sensor problem is never a miss)
 //   - GREEN  : eyes on the ball for >= 80% of the valid time AND first on it within 30% of the flight
-//   - AMBER  : eyes on the ball for >= 50% of the valid time (partly tracked, or acquired late)
+//              AND still on it as it arrives (deck slide 7: "Eyes stayed on the ball until it arrived")
+//   - AMBER  : eyes on the ball for >= 50% of the valid time (partly tracked, acquired late, or left it before it arrived)
 //   - RED    : anything else with enough valid tracking
 //
 // One deliberate fix (acceptance test T09). The baseline advanced its clock even for a rejected sample, so the
 // interval that ENDED on the next good sample was credited although the sample before it was invalid. Now an interval is
 // credited only when BOTH of its ends are good samples, closer together than `maxGapMs`.
+//
+// The arrival check looks only at the last `arrivalFraction` of the flight. If that window was not tracked well enough to
+// judge (a blink right at the end), the check is skipped rather than failed: a sensor gap is never the player's miss.
 
 export const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
@@ -25,6 +29,9 @@ export const RULES = Object.freeze({
   greenCoverage: 0.8,
   greenAcquireFraction: 0.3,
   amberCoverage: 0.5,
+  arrivalFraction: 0.15, // the last 15% of the flight is "as it arrives"
+  arrivalMinValid: 0.5, // the window must be at least half tracked to be judged
+  arrivalCoverage: 0.6, // and the eyes on the ball for at least 60% of it
   maxErrorDeg: 180,
 });
 
@@ -68,6 +75,9 @@ export class Trial {
     this.valid = 0; // ms of validly tracked time
     this.hit = 0; // ms of that time spent on the ball
     this.first = null; // time the gaze first reached the ball
+    this.arrivalStart = duration * (1 - RULES.arrivalFraction);
+    this.endValid = 0; // validly tracked ms inside the arrival window
+    this.endHit = 0; // of which on the ball
     this.bad = 0; // rejected samples and intervals (diagnostic only, never shown as a miss)
     this.samples = 0;
     this.closed = false;
@@ -115,6 +125,11 @@ export class Trial {
     }
     this.valid += dt;
     if (onBall) this.hit += dt;
+    const inEnd = Math.max(0, t - Math.max(prevT, this.arrivalStart)); // part of this interval inside the arrival window
+    if (inEnd > 0) {
+      this.endValid += inEnd;
+      if (onBall) this.endHit += inEnd;
+    }
     return SAMPLE.OK;
   }
 
@@ -123,21 +138,23 @@ export class Trial {
     this.closed = true;
     const quality = this.valid / this.duration;
     const coverage = this.valid > 0 ? this.hit / this.valid : 0;
+    const window = this.duration - this.arrivalStart;
+    const arrivalJudged = this.endValid >= window * RULES.arrivalMinValid;
+    const onAtArrival = !arrivalJudged || this.endHit / this.endValid >= RULES.arrivalCoverage;
+    const early = this.first !== null && this.first <= this.duration * RULES.greenAcquireFraction;
     let status;
     let reason = null;
     if (quality < RULES.minQuality) {
       status = STATUS.UNSCORED;
       reason = 'insufficient-tracking';
-    } else if (
-      coverage >= RULES.greenCoverage &&
-      this.first !== null &&
-      this.first <= this.duration * RULES.greenAcquireFraction
-    ) {
+    } else if (coverage >= RULES.greenCoverage && early && onAtArrival) {
       status = STATUS.GREEN;
     } else if (coverage >= RULES.amberCoverage) {
       status = STATUS.AMBER;
+      reason = !early ? 'late' : !onAtArrival ? 'left-early' : 'partial';
     } else {
       status = STATUS.RED;
+      reason = 'looked-away';
     }
     this.result = {
       mode: this.mode,
@@ -146,6 +163,7 @@ export class Trial {
       quality,
       coverage,
       acquireMs: this.first,
+      arrival: arrivalJudged ? this.endHit / this.endValid : null,
       validMs: this.valid,
       samples: this.samples,
       bad: this.bad,
