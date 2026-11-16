@@ -6,6 +6,12 @@ World.create(document.getElementById('scene-container'), projectOptions).then((w
   window.__world = world;
   world.registerSystem(LobbySystem);
 
+  const loader = document.getElementById('lobby-loader');
+  if (loader) {
+    loader.classList.add('loaded');
+    setTimeout(() => loader.remove(), 500);
+  }
+
   const params = new URLSearchParams(window.location.search);
   if (params.has('autoxr')) {
     setTimeout(async () => {

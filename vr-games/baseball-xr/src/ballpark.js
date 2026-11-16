@@ -135,7 +135,8 @@ function grassTexture() {
 function dirt(ctx, w, h, rand, alphaMask) {
   ctx.save();
   if (alphaMask) ctx.globalCompositeOperation = 'source-atop';
-  for (let i = 0; i < (w * h) / 30; i++) {
+  const count = Math.min(14000, Math.floor((w * h) / 75));
+  for (let i = 0; i < count; i++) {
     ctx.fillStyle = rand() < 0.5 ? 'rgba(90,50,25,0.16)' : 'rgba(255,225,190,0.10)';
     ctx.fillRect(rand() * w, rand() * h, 1 + rand() * 2, 1 + rand() * 2);
   }
@@ -151,7 +152,7 @@ const CHALK = 'rgba(250,250,245,0.95)';
 const IF_SIZE = 66;
 const IF_CZ = PLATE_Z - 20.5;
 function infieldTexture() {
-  const S = 2048;
+  const S = 1024;
   const c = canvas(S, S);
   const ctx = c.getContext('2d');
   const k = S / IF_SIZE;

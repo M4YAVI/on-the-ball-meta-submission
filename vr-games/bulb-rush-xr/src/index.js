@@ -4,6 +4,10 @@ import { GameSystem } from './game.js';
 
 World.create(document.getElementById('scene-container'), projectOptions).then((world) => {
   window.__world = world;
+  if (world.renderer?.shadowMap) {
+    world.renderer.shadowMap.autoUpdate = false;
+    world.renderer.shadowMap.enabled = false;
+  }
   world.registerSystem(GameSystem);
 
   const params = new URLSearchParams(window.location.search);

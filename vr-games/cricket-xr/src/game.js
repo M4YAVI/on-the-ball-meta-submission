@@ -785,6 +785,7 @@ export class GameSystem extends createSystem({}) {
     const inHeadset = !!this.world.session;
     this.focus.sample(this.player, this.world.camera, inHeadset, dt);
     if (this.state === 'swinging' || this.state === 'flying') {
+      if (this.world?.renderer?.shadowMap) this.world.renderer.shadowMap.needsUpdate = true;
       this.eyeTracker.update(
         this.focus,
         this.ball.position,

@@ -40,7 +40,7 @@
     "features": {
       "locomotion": false,
       "grabbing": false,
-      "physics": true,
+      "physics": false,
       "sceneUnderstanding": false,
       "environmentRaycast": false,
       "spatialUI": {

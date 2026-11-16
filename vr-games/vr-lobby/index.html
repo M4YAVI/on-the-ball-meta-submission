@@ -1,22 +1,283 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
     />
     <link rel="icon" href="data:," />
     <title>VR Games Hub - Central VR Lobby</title>
     <style>
-      body { margin: 0; background: #000; overflow: hidden; user-select: none; }
-      #visor { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #000;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: manipulation;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      #visor {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 10;
+        transition: opacity 0.3s ease;
+      }
+
+      /* Immediate Inline Loading Screen for 3G & Slow Connections */
+      #lobby-loader {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background: radial-gradient(circle at 50% 45%, #0f172a 0%, #020617 75%, #000000 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #f8fafc;
+        transition: opacity 0.5s ease, visibility 0.5s;
+      }
+      #lobby-loader.loaded {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .loader-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: 24px;
+      }
+      .loader-icon-wrap {
+        position: relative;
+        width: 72px;
+        height: 72px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 16px;
+      }
+      .loader-glow {
+        position: absolute;
+        inset: -10px;
+        background: radial-gradient(circle, rgba(56, 189, 248, 0.35) 0%, transparent 70%);
+        border-radius: 50%;
+        animation: pulse-glow 2s infinite ease-in-out;
+      }
+      .loader-icon {
+        width: 48px;
+        height: 48px;
+        color: #38bdf8;
+        filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.6));
+      }
+      .loader-title {
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        color: #f1f5f9;
+        margin-bottom: 4px;
+      }
+      .loader-sub {
+        font-size: 12px;
+        color: #94a3b8;
+        font-weight: 500;
+        margin-bottom: 20px;
+        letter-spacing: 0.5px;
+      }
+      .loader-bar-wrap {
+        width: 160px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+      .loader-bar {
+        width: 40%;
+        height: 100%;
+        background: linear-gradient(90deg, #38bdf8, #818cf8);
+        border-radius: 2px;
+        animation: loader-slide 1.5s infinite ease-in-out;
+      }
+      .loader-status {
+        font-size: 11px;
+        color: #64748b;
+        letter-spacing: 0.3px;
+      }
+      @keyframes pulse-glow {
+        0%, 100% { transform: scale(0.9); opacity: 0.5; }
+        50% { transform: scale(1.15); opacity: 0.9; }
+      }
+      @keyframes loader-slide {
+        0% { transform: translateX(-100%); }
+        50% { transform: translateX(100%); }
+        100% { transform: translateX(250%); }
+      }
+
+      /* Responsive UI & Menu Styles */
+      #emulator-toggle-btn {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 1000000;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(15, 23, 42, 0.88);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        color: #f1f5f9;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 7px 12px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        transition: all 0.2s;
+        min-height: 36px;
+      }
+      #emulator-toggle-btn:active {
+        transform: scale(0.96);
+      }
+
+      #iwsdk-device-switcher {
+        position: fixed;
+        top: 54px;
+        right: 12px;
+        z-index: 999999;
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        background: rgba(15, 23, 42, 0.96);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7);
+        max-width: calc(100vw - 24px);
+      }
+      .switcher-section-title {
+        color: #94a3b8;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+      }
+      .switcher-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .switcher-btn {
+        padding: 7px 11px;
+        font-size: 12px;
+        font-weight: 600;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        background: #1e293b;
+        color: #94a3b8;
+        transition: all 0.15s ease;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-height: 34px;
+      }
+      .switcher-btn:hover, .switcher-btn:active {
+        background: #334155;
+        color: #ffffff;
+      }
+
+      /* Mobile Portrait adaptations (touch target >= 44px) */
+      @media (max-width: 600px) {
+        #emulator-toggle-btn {
+          top: 10px;
+          right: 10px;
+          padding: 10px 14px;
+          min-height: 44px;
+          font-size: 13px;
+        }
+        #iwsdk-device-switcher {
+          top: 60px;
+          right: 10px;
+          left: 10px;
+          max-width: none;
+          padding: 14px;
+        }
+        .switcher-btn {
+          flex: 1 1 calc(50% - 6px);
+          justify-content: center;
+          min-height: 44px;
+          font-size: 12px;
+        }
+      }
+
+      /* Enter VR Button */
+      #enter-vr-btn {
+        display: none;
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000000;
+        align-items: center;
+        gap: 8px;
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        padding: 12px 24px;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        box-shadow: 0 8px 24px rgba(37, 99, 235, 0.5);
+        transition: all 0.2s;
+        min-height: 44px;
+      }
+      #enter-vr-btn:hover {
+        background: linear-gradient(135deg, #0369a1, #1d4ed8);
+        box-shadow: 0 10px 28px rgba(37, 99, 235, 0.7);
+        transform: translateX(-50%) scale(1.03);
+      }
+      #enter-vr-btn:active {
+        transform: translateX(-50%) scale(0.98);
+      }
     </style>
   </head>
   <body>
+    <!-- Immediate Inline Loading Screen -->
+    <div id="lobby-loader" aria-live="polite">
+      <div class="loader-content">
+        <div class="loader-icon-wrap">
+          <div class="loader-glow"></div>
+          <svg class="loader-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor">
+            <path stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M8 18c0-3.3 2.7-6 6-6h20c3.3 0 6 2.7 6 6v12c0 3.3-2.7 6-6 6H14c-3.3 0-6-2.7-6-6V18z"/>
+            <circle cx="18" cy="24" r="4" stroke-width="2.5"/>
+            <circle cx="30" cy="24" r="4" stroke-width="2.5"/>
+            <path stroke-width="2.5" stroke-linecap="round" d="M22 24h4"/>
+          </svg>
+        </div>
+        <div class="loader-title">VR GAMES HUB</div>
+        <div class="loader-sub">Meta WebXR Sports Trilogy</div>
+        <div class="loader-bar-wrap">
+          <div class="loader-bar"></div>
+        </div>
+        <div class="loader-status">Loading VR experience...</div>
+      </div>
+    </div>
+
     <div id="scene-container"></div>
 
-    <!-- The PC view is framed as the view through the headset. Hidden in a headset (see src/visor.js). -->
+    <!-- The PC view is framed as the view through the headset. Hidden in a headset and portrait mobile (see src/visor.js). -->
     <svg id="visor" viewBox="0 0 757 502" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
       <defs>
         <linearGradient id="visor-shell" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="430">
@@ -47,31 +308,44 @@
     </svg>
 
     <script type="module" src="/src/index.js"></script>
-  
+
     <!-- Hamburger button to toggle Emulator Menu -->
     <button
       id="emulator-toggle-btn"
       onclick="toggleEmulatorSwitcher()"
-      style="position:fixed;top:12px;right:12px;z-index:1000000;display:flex;align-items:center;gap:6px;background:rgba(15,23,42,0.88);backdrop-filter:blur(8px);color:#f1f5f9;border:1px solid rgba(255,255,255,0.2);padding:7px 12px;border-radius:10px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,0.4);transition:all 0.2s;"
       title="Toggle Emulator Menu"
+      aria-label="Toggle Emulator Menu"
     >
       <span id="emulator-toggle-icon" style="font-size:14px;line-height:1;">☰</span>
       <span>Emulator</span>
     </button>
 
-    <!-- Floating IWSDK Device Switcher (Collapsible, hidden by default) -->
-    <div
-      id="iwsdk-device-switcher"
-      style="position:fixed;top:52px;right:12px;z-index:999999;display:none;align-items:center;gap:6px;background:rgba(15,23,42,0.94);backdrop-filter:blur(10px);padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.6);flex-wrap:wrap;max-width:calc(100vw - 24px);"
-    >
-      <span style="color:#94a3b8;font-size:11px;font-weight:700;letter-spacing:0.5px;">EMULATOR:</span>
-      <button id="dev-btn-glasses" onclick="setEmulatorDevice('metaVRGlasses')" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">👓 VR Glasses (Gaze)</button>
-      <button id="dev-btn-pro" onclick="setEmulatorDevice('metaQuestPro')" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">👁️ Quest Pro</button>
-      <button id="dev-btn-q3" onclick="setEmulatorDevice('metaQuest3')" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">🥽 Quest 3</button>
-      <a href="https://localhost:8081/?autoxr=1" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;text-decoration:none;background:#6366f1;color:#ffffff;display:inline-flex;align-items:center;gap:4px;">🏏 Cricket Catch</a>
-      <a href="https://localhost:8082/?autoxr=1" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;text-decoration:none;background:#10b981;color:#ffffff;display:inline-flex;align-items:center;gap:4px;">⚾ Glove Up</a>
-      <a href="https://localhost:8083/?autoxr=1" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;text-decoration:none;background:#f59e0b;color:#ffffff;display:inline-flex;align-items:center;gap:4px;">💡 Bulb Rush</a>
+    <!-- Floating IWSDK Device Switcher (Collapsible, responsive) -->
+    <div id="iwsdk-device-switcher">
+      <span class="switcher-section-title">Headset Profile</span>
+      <div class="switcher-row">
+        <button id="dev-btn-glasses" class="switcher-btn" onclick="setEmulatorDevice('metaVRGlasses')">👓 VR Glasses</button>
+        <button id="dev-btn-pro" class="switcher-btn" onclick="setEmulatorDevice('metaQuestPro')">👁️ Quest Pro</button>
+        <button id="dev-btn-q3" class="switcher-btn" onclick="setEmulatorDevice('metaQuest3')">🥽 Quest 3</button>
+      </div>
+      <span class="switcher-section-title" style="margin-top:4px;">Quick Launch</span>
+      <div class="switcher-row">
+        <a id="link-cricket" href="https://localhost:8081/?autoxr=1" class="switcher-btn" style="background:#4338ca;color:#ffffff;">🏏 Cricket Catch</a>
+        <a id="link-baseball" href="https://localhost:8082/?autoxr=1" class="switcher-btn" style="background:#059669;color:#ffffff;">⚾ Glove Up</a>
+        <a id="link-bulb" href="https://localhost:8083/?autoxr=1" class="switcher-btn" style="background:#d97706;color:#ffffff;">💡 Bulb Rush</a>
+      </div>
     </div>
+
+    <!-- Enter VR Button (Only displayed when WebXR immersive-vr is supported by the browser) -->
+    <button
+      id="enter-vr-btn"
+      onclick="launchVRSession()"
+      aria-label="Enter Virtual Reality"
+    >
+      <span style="font-size:18px;">🥽</span>
+      <span>ENTER VR</span>
+    </button>
+
     <script>
       function toggleEmulatorSwitcher() {
         const sw = document.getElementById('iwsdk-device-switcher');
@@ -88,20 +362,60 @@
         url.searchParams.set('device', dev);
         window.location.href = url.toString();
       }
+
+      function launchVRSession() {
+        if (window.__world && window.__world.launchXR) {
+          window.__world.launchXR();
+        }
+      }
+
+      // Check for WebXR support
+      if (typeof navigator !== 'undefined' && navigator.xr && navigator.xr.isSessionSupported) {
+        navigator.xr.isSessionSupported('immersive-vr').then(function(supported) {
+          if (supported) {
+            var btn = document.getElementById('enter-vr-btn');
+            if (btn) btn.style.display = 'inline-flex';
+          }
+        }).catch(function() {});
+      }
+
+      // Sync active device button
       (function() {
         const cur = new URL(window.location.href).searchParams.get('device') || localStorage.getItem('iwsdk:device') || 'metaQuestPro';
         const q3Btn = document.getElementById('dev-btn-q3');
         const proBtn = document.getElementById('dev-btn-pro');
         const glassesBtn = document.getElementById('dev-btn-glasses');
-        if (cur === 'metaQuest3') {
-          if (q3Btn) { q3Btn.style.background = '#2563eb'; q3Btn.style.color = '#ffffff'; q3Btn.style.borderColor = '#60a5fa'; }
-        } else if (cur === 'metaVRGlasses') {
-          if (glassesBtn) { glassesBtn.style.background = '#8b5cf6'; glassesBtn.style.color = '#ffffff'; glassesBtn.style.borderColor = '#a78bfa'; }
-        } else {
-          if (proBtn) { proBtn.style.background = '#0ea5e9'; proBtn.style.color = '#ffffff'; proBtn.style.borderColor = '#38bdf8'; }
+        if (cur === 'metaQuest3' && q3Btn) {
+          q3Btn.style.background = '#2563eb'; q3Btn.style.color = '#ffffff'; q3Btn.style.borderColor = '#60a5fa';
+        } else if (cur === 'metaVRGlasses' && glassesBtn) {
+          glassesBtn.style.background = '#8b5cf6'; glassesBtn.style.color = '#ffffff'; glassesBtn.style.borderColor = '#a78bfa';
+        } else if (proBtn) {
+          proBtn.style.background = '#0ea5e9'; proBtn.style.color = '#ffffff'; proBtn.style.borderColor = '#38bdf8';
+        }
+
+        // Adjust dev links when served from hub or subfolder
+        const loc = window.location;
+        if (loc.port !== '8080') {
+          const basePath = loc.pathname.replace(/\/$/, '');
+          const cricketLink = document.getElementById('link-cricket');
+          const baseballLink = document.getElementById('link-baseball');
+          const bulbLink = document.getElementById('link-bulb');
+          if (cricketLink) cricketLink.href = basePath + '/cricket/?autoxr=1';
+          if (baseballLink) baseballLink.href = basePath + '/baseball/?autoxr=1';
+          if (bulbLink) bulbLink.href = basePath + '/bulb/?autoxr=1';
         }
       })();
-    </script>
 
+      // Fallback loader dismiss
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          var loader = document.getElementById('lobby-loader');
+          if (loader && !loader.classList.contains('loaded')) {
+            loader.classList.add('loaded');
+            setTimeout(function() { if (loader.parentNode) loader.remove(); }, 600);
+          }
+        }, 3500);
+      });
+    </script>
   </body>
 </html>

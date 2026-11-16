@@ -17,14 +17,20 @@ function seenBefore() {
   }
 }
 
+export function isTouchDevice() {
+  if (typeof window === 'undefined') return false;
+  return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+}
+
 export const GUIDE_TEXT = {
   desktop: 'Point at a sport. Click.',
+  touch: 'Tap a sport to launch.',
   look: 'Look at a sport.',
   pinch: 'Pinch. That is the tap.',
 };
 
-export function guideStep(inXR, hasFocus) {
-  if (!inXR) return 'desktop';
+export function guideStep(inXR, hasFocus, isTouch = isTouchDevice()) {
+  if (!inXR) return isTouch ? 'touch' : 'desktop';
   return hasFocus ? 'pinch' : 'look';
 }
 
