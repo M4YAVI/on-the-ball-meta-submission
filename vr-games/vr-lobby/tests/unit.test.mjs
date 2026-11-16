@@ -10,18 +10,25 @@ const rects = tileRects();
 const at = (id) => rects[CFG.games.findIndex((g) => g.id === id)];
 const pick = (x, y, current = -1) => pickTile(x, y, rects, current, gap, stickiness);
 
-test('Config: the four games, on distinct ports that are not the lobby', () => {
-  assert.deepEqual(CFG.games.map((g) => g.id), ['baseball', 'cricket', 'bulbrush', 'ontheball']);
+test('Config: the five games, on distinct ports that are not the lobby', () => {
+  assert.deepEqual(CFG.games.map((g) => g.id), ['baseball', 'cricket', 'bulbrush', 'ontheball', 'ontheballfootball']);
   const ports = CFG.games.map((g) => g.port);
-  assert.equal(new Set(ports).size, 4);
+  assert.equal(new Set(ports).size, 5);
   assert.ok(!ports.includes(8080));
 });
 
-test('Layout: baseball top-left, cricket top-right, Bulb Rush bottom-left, ON THE BALL bottom-right', () => {
+test('Layout: baseball top-left, cricket top-right, Bulb Rush below baseball, ON THE BALL below cricket', () => {
   assert.ok(at('baseball').x < 0 && at('baseball').y > 0);
   assert.ok(at('cricket').x > 0 && at('cricket').y > 0);
-  assert.ok(at('bulbrush').x < 0 && at('bulbrush').y < 0);
-  assert.ok(at('ontheball').x > 0 && at('ontheball').y < 0);
+  assert.ok(at('bulbrush').x < 0 && at('bulbrush').y < at('baseball').y);
+  assert.ok(at('ontheball').x > 0 && at('ontheball').y < at('cricket').y);
+});
+
+test('Layout: ON THE BALL Football is one wide tile under the other four, centred', () => {
+  const f = at('ontheballfootball');
+  assert.ok(f.y < at('ontheball').y && f.y < at('bulbrush').y);
+  assert.ok(Math.abs(f.x) < 1e-9);
+  assert.ok(f.w > at('ontheball').w * 1.9);
 });
 
 test('Layout: the whole grid fits the view of Meta VR Glasses without a head turn', () => {

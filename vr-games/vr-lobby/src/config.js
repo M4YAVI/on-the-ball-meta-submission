@@ -60,6 +60,18 @@ export const CFG = {
       storageKey: 'otb-best-green',
       bestSuffix: ' / 20 green',
     },
+    {
+      id: 'ontheballfootball',
+      title: 'ON THE BALL Football',
+      art: 'football',
+      row: 2,
+      col: 0,
+      span: 2, // the bottom row is one wide tile
+      port: 8085,
+      path: 'ontheball/football', // where the hub serves it
+      storageKey: 'otb-football-best-green',
+      bestSuffix: ' / 20 green',
+    },
   ],
 };
 
@@ -90,7 +102,7 @@ export function getGameUrl(game) {
     return `${loc.protocol}//${loc.hostname}:${game.port}/?autoxr=1`;
   }
   const basePath = loc.pathname.replace(/\/$/, '');
-  const subfolder = game.id === 'bulbrush' ? 'bulb' : game.id;
+  const subfolder = game.path ?? (game.id === 'bulbrush' ? 'bulb' : game.id);
   // keep ?device=... so the emulator chosen in the lobby is also used inside the game, and add autoxr=1 so the game
   // re-enters VR on its own (leaving the lobby page ends the VR session, so without it the game opens on a flat preview)
   const params = new URLSearchParams(loc.search);
