@@ -8,7 +8,7 @@ export const COLORS = Object.freeze({
   edge: 'rgba(255,255,255,0.12)',
   text: '#F3F6F4',
   dim: '#9AA6A0',
-  faint: '#5C6760',
+  faint: '#8E9A93',
   accent: '#3DDC84', // the brand green
   green: '#3DDC84',
   amber: '#F5A524',

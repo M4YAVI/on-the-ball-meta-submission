@@ -9,7 +9,7 @@
 //   - Only totals are kept. No gaze or head poses are stored.
 
 import { createSystem, Group, Mesh, MeshBasicMaterial, Pressed, Quaternion, RayInteractable, RingGeometry, SphereGeometry, Vector3, VisibilityState } from '@iwsdk/core';
-import { angle, STATUS, Trial } from './core/engine.js';
+import { angle, STATUS, TOLERANCE as BASE_TOLERANCE, toleranceFor, Trial } from './core/engine.js';
 import { CAL, CalibrationCheck, GazeVerdict, VERDICT } from './core/gaze-verdict.js';
 import { ballPosition, bounceT, flightMs, PATH, SPEED_OPTIONS } from './core/ball-path.js';
 import { GameFlow, MODE, PHASE } from './core/flow.js';
@@ -23,11 +23,12 @@ import { COLORS } from './xr/theme.js';
 
 const LEAD_IN = 0.9; // s: the bowler stands, gathers and brings his arm over before the ball is released (no run-up)
 const GAP = 2.2; // s between deliveries
-const TOLERANCE = 7; // degrees between gaze and ball that counts as "on the ball" (the handoff's headset value)
+const TOLERANCE = BASE_TOLERANCE.base; // 7 deg near the centre; eye mode widens it toward the edge (core/engine.js toleranceFor)
 const CAL_ANGLE = 14; // degrees to each side for the calibration dots
 const CAL_DIST = 2.4;
 const PREFS_KEY = 'otb.prefs.v1';
 const LOCK_ON_MS = 100; // guide ring: on the ball this long before it turns green
+const MAX_FLIGHT_STEP = 0.05; // s: the most the ball's flight clock moves in one frame (see stepPlay)
 const LOCK_OFF_MS = 150; // and off the ball this long before it goes back to white (no flicker)
 
 function safeStorage() {
@@ -45,7 +46,11 @@ const CAL_MESSAGES = {
   'off-target': 'We could not see your eyes reach the dot. Try again, or use Head mode.',
   'head-moved': 'Your head moved. Keep it still and move only your eyes. If this keeps happening, this device follows your head, so use Head mode.',
   'gaze-follows-head': 'The gaze followed your head instead of your eyes, so eye mode stays locked. Use Head mode.',
+  recentered: 'The view was recentred, so the eye check stopped. Keep your head still and try again.',
 };
+
+// Served inside the local hub (https://<pc>/ontheball/) there is a lobby one level up; served on its own there is not.
+const IN_HUB = typeof window !== 'undefined' && window.location.pathname.split('/').filter(Boolean).length > 0;
 
 export class GameSystem extends createSystem({ pressed: { required: [RayInteractable, Pressed] } }) {
   init() {
@@ -66,6 +71,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.headArr = [0, 0, 0];
     this.rayArr = [0, 0, 0];
     this.toBall = [0, 0, 0];
+    this.headToBall = [0, 0, 0];
 
     // Everything lives in one anchor placed at the seated player's eyes, so the scene follows their height and facing.
     this.anchor = new Group();
@@ -101,10 +107,18 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.bestStreak = 0;
     this.modeCheckAt = 0;
     this.time = 0;
+    this.refSpace = null;
+    this.recenterPending = false;
+    this.warmFrames = 0;
+    this.onRecenter = () => {
+      this.recenterPending = true; // handled on the next frame, inside the normal update
+    };
+    this.cleanupFuncs.push(() => this.detachRecenter());
 
     this.ui = new Ui(this.world, this.anchorEntity, (id) => this.onPress(id));
     this.anchor2D();
     this.toStart();
+    this.prewarm();
 
     this.queries.pressed.subscribe('qualify', (entity) => this.ui.press(entity));
     this.cleanupFuncs.push(
@@ -149,6 +163,49 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         const model = v[kind]?.[side]?.visual?.model;
         if (model && model.visible) model.visible = false;
       }
+    }
+  }
+
+  // The first time the ball, its glow and the ready dot are drawn, the GPU compiles their shaders and uploads their textures.
+  // That one-off stall (well over 100 ms) landed inside the first flight, so the warm-up ball came out UNSCORED for "weak
+  // tracking". Doing that work here, before anything is played, keeps every flight smooth from the first ball.
+  prewarm() {
+    const r = this.world.renderer;
+    if (!r) return;
+    const objs = [this.ball.group, this.readyDot, this.calDots, this.headDot];
+    const was = objs.map((o) => o.visible);
+    try {
+      objs.forEach((o) => (o.visible = true));
+      this.ball.group.traverse((o) => {
+        if (o.material?.map) r.initTexture?.(o.material.map);
+      });
+      r.compile?.(this.world.scene, this.world.camera);
+    } catch (_) {
+      /* an optimisation only: the game works without it */
+    } finally {
+      objs.forEach((o, i) => (o.visible = was[i]));
+    }
+  }
+
+  // Inside a headset the renderer builds different (XR) shader variants, so the pre-warm above does not cover them. For the
+  // first few frames of every XR session the ball is drawn far too small to see, straight ahead, which makes the GPU do that
+  // work now instead of on the first release (measured: a 306 ms stall on the release frame without this).
+  warmXR() {
+    if (!(this.warmFrames > 0)) return;
+    const g = this.ball.group;
+    if (this.flow.phase === PHASE.PLAYING || this.cur) {
+      this.warmFrames = 0; // never interfere with a real ball
+      g.scale.setScalar(1);
+      return;
+    }
+    this.warmFrames -= 1;
+    if (this.warmFrames > 0) {
+      g.visible = true;
+      g.scale.setScalar(1e-4);
+      g.position.set(0, 0, -3);
+    } else {
+      g.visible = false;
+      g.scale.setScalar(1);
     }
   }
 
@@ -258,6 +315,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       guide: this.guide,
       streak: this.streak,
       bestStreak: this.bestStreak,
+      inHub: IN_HUB,
     };
   }
 
@@ -289,13 +347,43 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.showPhase();
   }
 
+  // Recenter (the player holds the system button, or the runtime resets the reference space). The scene is re-placed in
+  // front of the player, a ball in flight is thrown away (never a miss), and a running eye check stops, because its
+  // "head still" reference is no longer valid (T13).
+  attachRecenter() {
+    const ref = this.world.renderer?.xr?.getReferenceSpace?.();
+    if (!ref || ref === this.refSpace || typeof ref.addEventListener !== 'function') return;
+    this.detachRecenter();
+    this.refSpace = ref;
+    ref.addEventListener('reset', this.onRecenter);
+  }
+
+  detachRecenter() {
+    try {
+      this.refSpace?.removeEventListener('reset', this.onRecenter);
+    } catch (_) {
+      /* the session is already gone */
+    }
+    this.refSpace = null;
+  }
+
+  handleRecenter() {
+    this.recenterPending = false;
+    this.interruptPlay();
+    if (this.flow.phase === PHASE.CALIBRATING) this.endCalibration(false, 'recentered');
+    this.needAnchor = true;
+  }
+
   onSessionChange(inXR) {
     this.wasInXR = inXR;
     if (inXR) {
       this.needAnchor = true;
       this.rays.gazeSeenAt = -Infinity;
       this.verdict.reset();
+      this.warmFrames = 4; // see warmXR()
     } else {
+      this.detachRecenter();
+      this.recenterPending = false;
       this.interruptPlay();
       if (this.flow.phase === PHASE.CALIBRATING) this.endCalibration(false, 'no-gaze');
       this.anchor2D();
@@ -315,13 +403,6 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const f = this.flow;
     this.notice = null;
     switch (id) {
-      case 'tile:cricket':
-        if (f.selectSport('cricket')) {
-          this.sfx.play('confirm');
-          this.updateEyeAvailability(true);
-          this.showPhase();
-        }
-        break;
       case 'btn:eye':
         if (this.eyeAvailable && f.beginCalibration()) this.startCalibration();
         break;
@@ -329,7 +410,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         if (f.chooseMode(MODE.HEAD)) this.toReady();
         break;
       case 'btn:back':
-        window.location.href = new URL('../', window.location.href).href; // the one lobby sits one level up
+        // the mode choice is the first screen, so back means the main lobby one level up
+        if (IN_HUB && f.phase === PHASE.MODE) window.location.href = new URL('../', window.location.href).href;
         break;
       case 'btn:calcancel':
         this.endCalibration(false, null);
@@ -391,12 +473,13 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     }
   }
 
-  // The lobby already picked this game, so there is no second sport menu: ON THE BALL opens straight on the cricket mode choice.
-  // (Baseball, tennis and football are P1; the picker panels stay in ui.js for when they ship.)
+  // The main lobby already picks the game, so ON THE BALL has no sport picker of its own: it opens straight on cricket's
+  // "how should we follow the ball" choice. (New sports get added as tiles in the main lobby.)
   toStart() {
     this.flow.exit();
     this.flow.selectSport('cricket');
     this.updateEyeAvailability(true);
+    this.notice = null;
     this.showPhase();
   }
 
@@ -523,7 +606,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const c = this.cur;
     if (!c) return;
     const f = this.flow;
-    const lead = time - c.t0;
+    // Once the ball is away, its clock moves at most MAX_FLIGHT_STEP per frame. A frame hitch (a busy PC running the
+    // emulator, a GC pause) then holds the ball still for that frame instead of jumping it ahead, so the gaze is always
+    // compared with where the ball was actually drawn and no hitch turns into a tracking gap that marks the ball UNSCORED.
+    // At a steady headset frame rate every step is far below the cap, so nothing changes there.
+    const lead = c.released ? (c.flight += Math.min(dt, MAX_FLIGHT_STEP)) : time - c.t0;
     if (lead < 0) {
       this.scene3d.setDelivery(lead); // seconds to release: the bowler's arm comes up and over
       const k = Math.min(1, (lead + LEAD_IN) / 0.35); // fade in, then a gentle pulse
@@ -533,12 +620,13 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     }
     if (!c.released) {
       c.released = true;
+      c.flight = Math.min(lead, MAX_FLIGHT_STEP);
       this.readyDot.visible = false;
       this.ball.show(true);
       this.sfx.play('ui', 0.25); // a soft click at release: the ball is away
     }
-    this.scene3d.setDelivery(lead); // seconds since release: the follow-through after the ball has gone
-    const ms = lead * 1000;
+    this.scene3d.setDelivery(c.flight); // seconds since release: the follow-through after the ball has gone
+    const ms = c.flight * 1000;
     if (ms >= c.dur) {
       this.finishBall(time);
       return;
@@ -554,13 +642,14 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (import.meta.env.DEV && window.__otb?.autopilot) this.devAutopilot(t01);
     let ok;
     let source;
+    let headOk = false;
     if (f.mode === MODE.HEAD) {
       ok = this.rays.headRay(this.o, this.d);
       source = 'head';
     } else {
       ok = this.rays.eyeRay(this.o, this.d);
       source = f.mode;
-      this.rays.headRay(this.ho, this.hd);
+      headOk = this.rays.headRay(this.ho, this.hd);
       this.eyeArr[0] = this.d.x;
       this.eyeArr[1] = this.d.y;
       this.eyeArr[2] = this.d.z;
@@ -583,10 +672,20 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       this.rayArr[2] = this.d.z;
       err = angle(this.rayArr, this.toBall);
     }
-    c.trial.sample(ms, err, source, ok);
+    // How far the ball is from where the head points. Toward the edge the eyes (and the tracker) are less exact, so eye mode
+    // gets a wider cone there; head mode keeps the fixed one. Without a head pose, the centre value applies.
+    let tol = TOLERANCE;
+    if (f.mode !== MODE.HEAD && headOk) {
+      this.headToBall[0] = this.world3.x - this.ho.x;
+      this.headToBall[1] = this.world3.y - this.ho.y;
+      this.headToBall[2] = this.world3.z - this.ho.z;
+      tol = toleranceFor(angle(this.headArr, this.headToBall), source);
+    }
+    c.trial.sample(ms, err, source, ok, tol);
 
     // Guide ring: green while the player is on the ball, white when not. Debounced so it does not flicker. Feedback only.
-    if (ok && err <= TOLERANCE) {
+    // Same cone as the score, so the ring never disagrees with the result.
+    if (ok && err <= tol) {
       c.onSince ??= ms;
       c.offSince = null;
     } else {
@@ -710,6 +809,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.time = time;
     const inXR = this.rays.inSession();
     if (inXR !== this.wasInXR) this.onSessionChange(inXR);
+    if (inXR) {
+      this.attachRecenter();
+      if (this.recenterPending) this.handleRecenter();
+      this.warmXR();
+    }
     if (this.needAnchor && inXR) this.tryAnchor();
     if (inXR) this.hideInputModels();
     this.rays.noteGaze(time);

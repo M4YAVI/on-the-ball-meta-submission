@@ -1,6 +1,7 @@
 // The ball and the ring that marks the live ball (deck slide 5). The ball is drawn at least ~0.9 degrees across so it can be
-// followed from the bowler's end; the ring is a fixed ~3.4 degrees around it. A white ball (the one used under lights) with a
-// soft glow, so it stands out against the dark nets from the moment it leaves the hand.
+// followed from the bowler's end; the ring is a fixed ~3.4 degrees around it. A red leather cricket ball with a cream seam,
+// as in the deck (slide 5 picture, slide 12 "The ball: a red sphere"). To stay easy to follow against grass and sky, the ball is
+// lit from inside (emissive), carries a soft warm glow, and always has the white ring around it.
 //
 // Guide ring: while the player is on the ball the ring eases to green, and eases back to white when they are not. It never
 // turns red mid-ball. It is feedback only; scoring does not read it.
@@ -24,14 +25,17 @@ function canvasTex(w, h, draw) {
 function leather() {
   return canvasTex(512, 256, (x) => {
     const g = x.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0, '#fbf8ef');
-    g.addColorStop(1, '#e6e0cf');
+    g.addColorStop(0, '#d0242a');
+    g.addColorStop(1, '#9c1519');
     x.fillStyle = g;
     x.fillRect(0, 0, 512, 256);
-    // the seam: a raised ridge with two rows of stitches
-    x.fillStyle = '#b9b09a';
+    // polished leather: a faint lighter band
+    x.fillStyle = 'rgba(255,190,180,0.10)';
+    x.fillRect(0, 40, 512, 30);
+    // the seam: a raised ridge with two rows of cream stitches
+    x.fillStyle = '#7d1014';
     x.fillRect(0, 122, 512, 12);
-    x.fillStyle = '#8a2a2a';
+    x.fillStyle = '#f1e7cf';
     for (let i = 0; i < 64; i++) {
       x.fillRect(i * 8 + 1, 113, 4, 3);
       x.fillRect(i * 8 + 1, 140, 4, 3);
@@ -42,9 +46,9 @@ function leather() {
 function glowTex() {
   return canvasTex(128, 128, (x, w, h) => {
     const g = x.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-    g.addColorStop(0, 'rgba(255,255,240,0.55)');
-    g.addColorStop(0.35, 'rgba(255,250,220,0.18)');
-    g.addColorStop(1, 'rgba(255,250,220,0)');
+    g.addColorStop(0, 'rgba(255,225,200,0.55)');
+    g.addColorStop(0.35, 'rgba(255,170,140,0.2)');
+    g.addColorStop(1, 'rgba(255,170,140,0)');
     x.fillStyle = g;
     x.fillRect(0, 0, w, h);
   });
@@ -55,7 +59,7 @@ export class BallRig {
     this.group = new Group();
     this.ball = new Mesh(
       new SphereGeometry(1, 28, 18),
-      new MeshStandardMaterial({ map: leather(), roughness: 0.45, metalness: 0, emissive: '#d8d2c0', emissiveIntensity: 0.55 }),
+      new MeshStandardMaterial({ map: leather(), roughness: 0.4, metalness: 0, emissive: '#e0262c', emissiveIntensity: 0.6 }),
     );
     this.glow = new Mesh(
       new PlaneGeometry(1, 1),

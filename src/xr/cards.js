@@ -1,23 +1,29 @@
 // Flat panels drawn with the 2D canvas and shown as textured planes. Drawing them from code keeps the app free of image
 // files and fonts, and gives every target its own hover and pressed look (the glasses have no gaze cursor).
 
-import { CanvasTexture, LinearFilter, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace } from '@iwsdk/core';
+import { CanvasTexture, LinearFilter, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace } from '@iwsdk/core';
 import { COLORS, FONT, OUTCOME } from './theme.js';
 
 export class Card {
   // w, h: size in metres. px: canvas pixels per metre (kept modest: panels are viewed at about 2 m).
-  constructor(w, h, px = 560) {
+  // ss: supersampling. Layout code keeps drawing in the same px-per-metre units; the canvas simply holds ss times more
+  // pixels, so text stays crisp in a headset (about 20 px/deg) instead of sitting right at its limit.
+  constructor(w, h, px = 560, ss = 1.8) {
     this.w = w;
     this.h = h;
+    this.ss = ss;
+    this.lw = Math.round(w * px);
+    this.lh = Math.round(h * px);
     this.canvas = document.createElement('canvas');
-    this.canvas.width = Math.round(w * px);
-    this.canvas.height = Math.round(h * px);
+    this.canvas.width = Math.round(this.lw * ss);
+    this.canvas.height = Math.round(this.lh * ss);
     this.ctx = this.canvas.getContext('2d');
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
-    this.texture.minFilter = LinearFilter;
-    this.texture.generateMipmaps = false;
-    this.texture.anisotropy = 4;
+    this.texture.minFilter = LinearMipmapLinearFilter;
+    this.texture.magFilter = LinearFilter;
+    this.texture.generateMipmaps = true;
+    this.texture.anisotropy = 8;
     this.mesh = new Mesh(
       new PlaneGeometry(w, h),
       new MeshBasicMaterial({ map: this.texture, transparent: true, toneMapped: false, depthWrite: false, depthTest: false }), // panels draw over the scene
@@ -26,17 +32,19 @@ export class Card {
   }
 
   get width() {
-    return this.canvas.width;
+    return this.lw;
   }
   get height() {
-    return this.canvas.height;
+    return this.lh;
   }
 
   draw(fn) {
     const c = this.ctx;
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    fn(c, this.canvas.width, this.canvas.height);
+    c.setTransform(this.ss, 0, 0, this.ss, 0, 0);
+    fn(c, this.lw, this.lh);
+    c.setTransform(1, 0, 0, 1, 0, 0);
     this.texture.needsUpdate = true;
   }
 
