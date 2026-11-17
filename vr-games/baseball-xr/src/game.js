@@ -127,6 +127,12 @@ export class GameSystem extends createSystem({}) {
     this.pitcher = new Pitcher(this.world);
     this.hud = new Hud(this.world, CFG.pitches);
     this.focus = new FocusTracker();
+    this.eyeO = new Vector3();
+    this.eyeD = new Vector3();
+    this.eyeF = new Vector3(0, 0, -1);
+    this.eyeQ = new Quaternion();
+    // emulator only; read once (not per frame). ?autogaze=0 turns the simulated eyes off.
+    this.autoGaze = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autogaze') !== '0';
     this.eyeTracker = new EyeRingTracker(this.world);
     this.diagnostics = new DiagnosticsPanel('Glove Up (Baseball)');
     this.diagnostics.attachWorld(this.world);
@@ -767,6 +773,28 @@ export class GameSystem extends createSystem({}) {
     }
   }
 
+  // Emulator only (the IWER desktop emulator is never on a real headset): a person cannot move emulated eyes, so, as in
+  // ON THE BALL's autopilot, the emulator's simulated gaze follows the ball during a pitch. It is SIMULATED input,
+  // labelled "emulated eyes" and never real eye data. Turn it off with ?autogaze=0 to test head mode in the emulator.
+  emulatedEyes(inHeadset) {
+    if (!inHeadset || !this.autoGaze) return;
+    const gaze = window.IWER_DEVICE?.gaze;
+    if (!gaze) return;
+    const head = this.player.head;
+    if (this.state === 'windup' || this.state === 'flying') {
+      head.getWorldPosition(this.eyeO);
+      this.eyeD.copy(this.ball.position).sub(this.eyeO);
+      if (this.eyeD.lengthSq() < 1e-6) return;
+      this.eyeD.normalize();
+      this.eyeQ.setFromUnitVectors(this.eyeF, this.eyeD);
+    } else {
+      // between pitches the simulated eyes simply rest straight ahead with the head
+      head.getWorldQuaternion(this.eyeQ);
+    }
+    gaze.connected = true;
+    gaze.quaternion.set(this.eyeQ.x, this.eyeQ.y, this.eyeQ.z, this.eyeQ.w);
+  }
+
   endFocus() {
     const f = this.focus.focus;
     this.lastFocus = f;
@@ -872,7 +900,9 @@ export class GameSystem extends createSystem({}) {
         if (this.target && this.target.material) this.target.material.opacity = 0.75;
       }
     }
+    this.emulatedEyes(inHeadset);
     this.focus.sample(this.player, this.world.camera, inHeadset, dt);
+    this.eyeTracker.updateHeadDot(this.focus, this.state !== 'idle' && this.state !== 'over', inHeadset);
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swapLockout > 0) this.swapLockout -= dt;

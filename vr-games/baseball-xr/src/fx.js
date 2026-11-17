@@ -8,10 +8,8 @@ import {
 // Sound (Kenney CC0 effects plus sounds generated in code) and pooled particles and a ball trail.
 // Everything is allocated up front, nothing in the frame loop.
 
-// Kenney sound effects (CC0), decoded on first use. Until a file is ready, the generated
-// tone for the same event plays instead, so the game is never silent. The mitt's pop, the pitch's
-// whoosh and the crowd are generated.
-const FILES = { coin: 'coin', hurt: 'hurt', level: 'level_up', ui: 'ui' };
+// Kenney sound effects (CC0) plus authentic glove catch and generated sounds.
+const FILES = { glove: 'glove', coin: 'coin', hurt: 'hurt', level: 'level_up', ui: 'ui' };
 
 export class Sound {
   constructor() {
@@ -50,13 +48,14 @@ export class Sound {
   }
 
   // Plays a decoded file; returns false when it is not ready so the caller can fall back.
-  file(name, volume = 0.7) {
+  file(name, volume = 0.7, rate = 1.0) {
     const buffer = this.buffers[name];
     if (!this.ctx || !buffer) return false;
     try {
       const src = this.ctx.createBufferSource();
       const gain = this.ctx.createGain();
       src.buffer = buffer;
+      src.playbackRate.value = rate;
       gain.gain.value = volume;
       src.connect(gain).connect(this.ctx.destination);
       src.start();
@@ -116,13 +115,35 @@ export class Sound {
     return { src, gain, filter };
   }
 
-  // The ball smacking into the mitt: a short leather pop with a low thump under it. Right in the
-  // pocket it is the full, deep pop; in the web or off the heel it is lighter and higher.
+  // The ball smacking into the mitt: a deep leather pocket pop with a low thump under it.
   pop(weight = 1) {
     if (!this.ctx) return;
     try {
-      this.noiseShot('lowpass', 1500 + 900 * (1 - weight), 0.7, 0.5 + 0.45 * weight, 0.002, 0.07 + 0.04 * weight);
-      this.tone(120 + 70 * (1 - weight), 60, 0.12, 'sine', 0.2 + 0.35 * weight);
+      const t = this.ctx.currentTime;
+      const thudOsc = this.ctx.createOscillator();
+      const thudGain = this.ctx.createGain();
+      thudOsc.type = 'sine';
+      const startF = 110 + 40 * (1 - weight);
+      thudOsc.frequency.setValueAtTime(startF, t);
+      thudOsc.frequency.exponentialRampToValueAtTime(55, t + 0.05);
+      thudGain.gain.setValueAtTime(0.5 + 0.35 * weight, t);
+      thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+      thudOsc.connect(thudGain).connect(this.ctx.destination);
+      thudOsc.start(t);
+      thudOsc.stop(t + 0.07);
+
+      const snapOsc = this.ctx.createOscillator();
+      const snapGain = this.ctx.createGain();
+      snapOsc.type = 'triangle';
+      snapOsc.frequency.setValueAtTime(850 + 600 * (1 - weight), t);
+      snapOsc.frequency.exponentialRampToValueAtTime(280, t + 0.03);
+      snapGain.gain.setValueAtTime(0.4 + 0.3 * weight, t);
+      snapGain.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
+      snapOsc.connect(snapGain).connect(this.ctx.destination);
+      snapOsc.start(t);
+      snapOsc.stop(t + 0.04);
+
+      this.noiseShot('bandpass', 2400 + 1000 * (1 - weight), 1.8, 0.3 + 0.25 * weight, 0.001, 0.04);
     } catch (e) {
       /* sound is optional */
     }
@@ -161,9 +182,13 @@ export class Sound {
   groan() {}
 
   caught(streak = 1, weight = 1) {
-    this.pop(weight);
-    if (!this.file('coin', 0.35)) this.tone(880, 1320, 0.18, 'triangle', 0.08);
-    this.cheer(Math.min(1.6, 0.6 + streak * 0.15));
+    const jitter = 1.0 + (Math.random() * 2 - 1) * 0.04;
+    const rate = (0.95 + 0.2 * (1 - weight)) * jitter;
+    const vol = Math.min(1.0, 0.65 + 0.35 * weight);
+    if (!this.file('glove', vol, rate)) {
+      this.pop(weight);
+    }
+    if (streak >= 4) this.cheer(Math.min(1.6, 0.6 + streak * 0.15));
   }
 
   missed() {

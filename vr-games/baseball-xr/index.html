@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <link rel="icon" href="data:," />
     <title>Glove Up: Baseball Catch</title>
+    <script>
+      // With no ?device= in the URL, drop a device left in this browser's storage by an older session (e.g. Quest 3),
+      // so the project's emulator device (Quest Pro, iwsdk.config.json) applies. The switcher below still works: it sets ?device=.
+      try {
+        if (!new URL(location.href).searchParams.has('device')) localStorage.removeItem('iwsdk:device');
+      } catch (e) {}
+    </script>
   </head>
   <body style="margin: 0">
     <div id="scene-container"></div>

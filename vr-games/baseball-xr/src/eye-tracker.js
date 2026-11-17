@@ -84,6 +84,16 @@ export class EyeRingTracker {
 
     world.createTransformEntity(this.group);
 
+    // Head-direction dot (same idea as ON THE BALL's head dot): with no eye tracking the head stands in for the
+    // eyes, so a small faint ring shows where it points. Real/simulated eyes never get a dot: the eyes must not chase it.
+    this.dot = new Mesh(
+      new RingGeometry(0.028, 0.04, 40),
+      new MeshBasicMaterial({ color: 0xf5a524, transparent: true, opacity: 0.6, side: DoubleSide, depthWrite: false, depthTest: false, toneMapped: false }),
+    );
+    this.dot.renderOrder = 28;
+    this.dot.visible = false;
+    world.createTransformEntity(this.dot);
+
     this.targetPoint = new Vector3();
     this.tempOrigin = new Vector3();
     this.tempDir = new Vector3();
@@ -101,6 +111,16 @@ export class EyeRingTracker {
   hide() {
     this.visible = false;
     this.group.visible = false;
+  }
+
+  // Show the head dot 3 m along the head direction while head tracking stands in for the eyes (in a headset).
+  updateHeadDot(focus, on, inHeadset) {
+    // Head mode, or emulated eyes (which are fake, so seeing where they point helps testing). Never real eyes.
+    const show = !!on && inHeadset && focus.valid && (focus.mode === 'head' || (focus.mode === 'eyes' && focus.simulated));
+    this.dot.visible = show;
+    if (!show) return;
+    this.dot.position.copy(focus.dir).multiplyScalar(3).add(focus.origin);
+    this.dot.lookAt(focus.origin);
   }
 
   // Update ring tracker position and styling based on live eye gaze.
