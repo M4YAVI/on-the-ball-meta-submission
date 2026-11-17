@@ -5,10 +5,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const files = [
-  path.join(__dirname, 'vr-lobby', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
-  path.join(__dirname, 'cricket-xr', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
-  path.join(__dirname, 'baseball-xr', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
-  path.join(__dirname, 'bulb-rush-xr', 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'),
+  path.join(__dirname, 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'index.js'), // the one shared install serves every app
 ];
 
 for (const f of files) {

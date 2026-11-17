@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const APPS = ['vr-lobby', 'cricket-xr', 'baseball-xr', 'bulb-rush-xr'];
+const APPS = ['.']; // the one shared install, vr-games/node_modules, serves every app
 
 for (const app of APPS) {
   const chunksDir = path.join(app, 'node_modules', '@iwsdk', 'vite-plugin-dev', 'dist', 'injection', 'chunks');

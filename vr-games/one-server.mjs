@@ -13,7 +13,7 @@
 //   https://<this-PC>:8443/ontheball/tennis/   ON THE BALL tennis (source in on-the-ball/tennis)
 //   https://<this-PC>:8443/ontheball/baseball/ ON THE BALL baseball (source in on-the-ball/baseball)
 //
-// No game source is changed. Each app is built with its own vite.config.js and its own node_modules,
+// No game source is changed. Each app is built with its own vite.config.js, and every app shares the one node_modules in this folder,
 // and the four builds are copied into hub/ the same way .github/workflows/pages.yml does it.
 // The builds use relative paths (base './'), so each one works from its sub-folder.
 //
@@ -39,9 +39,9 @@ const APPS = [
   { name: 'Glove Up (Baseball)', dir: 'baseball-xr', mount: 'baseball' },
   { name: 'Bulb Rush', dir: 'bulb-rush-xr', mount: 'bulb' },
   { name: 'ON THE BALL', dir: 'on-the-ball', mount: 'ontheball' }, // ON THE BALL lives in vr-games/on-the-ball
-  { name: 'ON THE BALL Football', dir: 'on-the-ball/football', mount: 'ontheball/football', sharedModules: 'on-the-ball' }, // a sub-project of ON THE BALL: no node_modules of its own
-  { name: 'ON THE BALL Tennis', dir: 'on-the-ball/tennis', mount: 'ontheball/tennis', sharedModules: 'on-the-ball' }, // same: a sub-project that shares ON THE BALL's modules
-  { name: 'ON THE BALL Baseball', dir: 'on-the-ball/baseball', mount: 'ontheball/baseball', sharedModules: 'on-the-ball' }, // same again (the catcher's view; the batsman's view stays cricket's)
+  { name: 'ON THE BALL Football', dir: 'on-the-ball/football', mount: 'ontheball/football' }, // a sub-project of ON THE BALL
+  { name: 'ON THE BALL Tennis', dir: 'on-the-ball/tennis', mount: 'ontheball/tennis' }, // same: a sub-project of ON THE BALL
+  { name: 'ON THE BALL Baseball', dir: 'on-the-ball/baseball', mount: 'ontheball/baseball' }, // same again (the catcher's view; the batsman's view stays cricket's)
 ];
 
 // The HTTPS certificate the IWSDK dev plugin already made. It holds the cert and key together, as the plugin writes it.
@@ -49,9 +49,9 @@ const CERT = path.join(ROOT, 'vr-lobby', '.iwsdk', 'https', '_cert.pem');
 
 function buildApp(app) {
   const cwd = path.join(ROOT, app.dir);
-  const viteBin = path.join(path.join(ROOT, app.sharedModules ?? app.dir), 'node_modules', 'vite', 'bin', 'vite.js');
+  const viteBin = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'); // the one install every app shares
   if (!fs.existsSync(viteBin)) {
-    throw new Error(`${app.name}: dependencies are missing. Run "npm install" in ${app.dir}.`);
+    throw new Error(`${app.name}: dependencies are missing. Run "npm install" in vr-games (one install serves every app).`);
   }
   console.log(`\n[build] ${app.name} (${app.dir})`);
   const r = spawnSync(process.execPath, [viteBin, 'build'], { cwd, stdio: 'inherit' });

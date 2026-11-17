@@ -59,7 +59,7 @@ function launchChrome() {
 
 for (const app of APPS) {
   console.log(`[STARTING] ${app.name} on port ${app.port}...`);
-  const viteBin = path.join(__dirname, app.dir, 'node_modules', 'vite', 'bin', 'vite.js');
+  const viteBin = path.join(__dirname, 'node_modules', 'vite', 'bin', 'vite.js'); // the one install every app shares
   
   const proc = spawn(process.execPath, [viteBin, '--port', String(app.port), '--host', '0.0.0.0'], {
     cwd: path.join(__dirname, app.dir),

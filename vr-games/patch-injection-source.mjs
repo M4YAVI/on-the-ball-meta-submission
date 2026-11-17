@@ -1,10 +1,7 @@
 import fs from 'node:fs';
 
 const files = [
-  'vr-lobby/node_modules/@iwsdk/vite-plugin-dev/dist/index.js',
-  'cricket-xr/node_modules/@iwsdk/vite-plugin-dev/dist/index.js',
-  'baseball-xr/node_modules/@iwsdk/vite-plugin-dev/dist/index.js',
-  'bulb-rush-xr/node_modules/@iwsdk/vite-plugin-dev/dist/index.js'
+  'node_modules/@iwsdk/vite-plugin-dev/dist/index.js', // the one shared install serves every app
 ];
 
 const target = `function createInjectionModuleSource(bundle) {
