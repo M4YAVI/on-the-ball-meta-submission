@@ -2,13 +2,13 @@
   "name": "vr-games-hub",
   "version": "1.0.0",
   "private": true,
-  "description": "One lobby and five games (Glove Up, Cricket Catch, Bulb Rush, ON THE BALL, ON THE BALL Football) on one HTTPS server",
+  "description": "One lobby and seven games (Glove Up, Cricket Catch, Bulb Rush, ON THE BALL, ON THE BALL Football, ON THE BALL Tennis, ON THE BALL Baseball) on one HTTPS server",
   "scripts": {
     "start": "node one-server.mjs",
     "serve": "node one-server.mjs --serve",
     "dev": "node one-server.mjs",
     "test:lobby": "cd vr-lobby && npm run test:unit",
-    "test:ontheball": "cd ../on-the-ball && npm test",
+    "test:ontheball": "cd on-the-ball && npm test",
     "build:lobby": "cd vr-lobby && npm run build",
     "dev:multi": "node start-all.mjs"
   }
