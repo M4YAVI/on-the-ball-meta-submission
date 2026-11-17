@@ -359,7 +359,8 @@ const record = (name, pass, detail = '') => {
   ok('no hands: missed', R.none.result === 'missed', show(R.none));
   ok('a pinch/select in the headset does not catch', R.pinch.click === false && R.pinch.result === 'missed', JSON.stringify(R.pinch));
 
-  ok('eyes only (head still): eye tracking recognised, focus high', R.eyesOnly.focusStats.realEyes && R.eyesOnly.focus > 0.8, `source=${R.eyesOnly.focusStats.source} focus=${R.eyesOnly.focus}`);
+  // This runs in the IWER emulator, so the faked eye ray is independent eye data but labelled simulated, never real eyes.
+  ok('eyes only (head still): eye data recognised (labelled simulated in the emulator), focus high', R.eyesOnly.focusStats.mode === 'eyes' && R.eyesOnly.focusStats.source === 'simulated-eyes' && !R.eyesOnly.focusStats.realEyes && R.eyesOnly.focus > 0.8, `source=${R.eyesOnly.focusStats.source} focus=${R.eyesOnly.focus}`);
   ok('eyes staring away: focus low, look-away detected', R.eyesAway.focus !== null && R.eyesAway.focus < 0.3 && R.eyesAway.focusStats.lookedAway, `focus=${R.eyesAway.focus} lookedAway=${R.eyesAway.focusStats.lookedAway}`);
   ok('head sways, eyes locked on ball: focus stays high', R.headMoveEyesLocked.focus > 0.8, `focus=${R.headMoveEyesLocked.focus} headTravel=${R.headMoveEyesLocked.focusStats.headTravel.toFixed(1)} eyeTravel=${R.headMoveEyesLocked.focusStats.eyeTravel.toFixed(1)}`);
   ok('no eye data, head follows ball: reported as HEAD tracking, never eyes', R.headFollows.focusStats.source === 'head' && !R.headFollows.focusStats.realEyes && R.headFollows.focus > 0.7, `source=${R.headFollows.focusStats.source} focus=${R.headFollows.focus}`);
