@@ -7,6 +7,8 @@
 //   - A pause, a hidden page, or the end of the XR session throws away the ball in flight. It is never scored as a miss.
 //   - A sensor failure gives UNSCORED, never red.
 //   - Only totals are kept. No gaze or head poses are stored.
+//   - Hand play (the mitt) is a second score beside the eyes, never instead of them: the eye score ends at the pitch's arrival and
+//     nothing the hand does can change it (see core/catching.js).
 
 import { startRoll, stepRoll } from '../../src/core/ball-path.js';
 import { createSystem, Group, Mesh, MeshBasicMaterial, Pressed, Quaternion, RayInteractable, RingGeometry, SphereGeometry, Vector3, VisibilityState } from '@iwsdk/core';
@@ -22,8 +24,12 @@ import { Ui } from '../../src/xr/ui.js';
 import { COLORS } from '../../src/xr/theme.js';
 import { ballPosition, DEFAULT_SPEED_ID, flightPlan, makeDeliveries, SPEED_OPTIONS } from './core/ball-path.js';
 import { drawnRps, spinAxis } from './core/pitches.js';
+import { CATCH, HandScore, mittFacesBall, pitchOffset, sweepCatch } from './core/catching.js';
 import { BaseballScene } from './xr/baseball-scene.js';
 import { BallRig } from './xr/ball.js';
+import { CatchCallout } from './xr/catch-callout.js';
+import { catchSpot } from './xr/glove.js';
+import { MouseMitt, PlayerMitt } from './xr/mitt.js';
 import { BASEBALL_SKIN } from './skin.js';
 
 const SETTLE = 0.9; // s: the pitcher looks in, nods to the sign and comes set before he starts his delivery (the ball is in his hand all along)
@@ -34,6 +40,9 @@ const CAL_DIST = 2.4;
 const PREFS_KEY = 'otb.prefs.baseball.v1'; // baseball's speeds are not cricket's, so its choice is stored apart
 const LOCK_ON_MS = 100; // guide ring: on the ball this long before it turns green
 const LOCK_OFF_MS = 150; // and off the ball this long before it goes back to white (no flicker)
+// The mitt is in hand on these screens: practice catches before the first pitch, every pitch, and the pause.
+const MITT_PHASES = new Set([PHASE.READY, PHASE.PLAYING, PHASE.BETWEEN, PHASE.PAUSED]);
+const BALL_R = 0.037; // a baseball's radius (m)
 
 function safeStorage() {
   try {
@@ -89,6 +98,20 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.anchor.add(this.calDots);
     this.headDot = this.makeHeadDot();
     this.anchor.add(this.headDot);
+    // Hand play: the mitt follows the player's hand, and a ball that lands in it is caught. The eye-tracking score does not change:
+    // it still follows the ball and still ends at the ball's arrival; the mitt gets the ball after that (core/catching.js).
+    this.mitt = new PlayerMitt(this.world);
+    this.anchor.add(this.mitt.group);
+    this.callout = new CatchCallout();
+    this.anchor.add(this.callout.mesh);
+    this.hand = new HandScore();
+    this.held = null; // the caught ball, resting in the mitt until the next pitch
+    this.caughtOnce = false;
+    // Desktop emulator only: the mouse stands in for the hand (a headset never uses this).
+    this.mouseMitt = new MouseMitt(this.world);
+    this.anchor.add(this.mouseMitt.hint);
+    this.mitt.override = () => (import.meta.env.DEV ? this.devMittPose() : null) ?? this.mouseMitt.pose(this.anchor); // the dev catcher (window.__otb.catcher) wins over the mouse
+    this.cleanupFuncs.push(() => this.mouseMitt.dispose());
 
     this.eyeAvailable = false;
     this.eyeNote = '';
@@ -187,7 +210,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
   prewarm() {
     const r = this.world.renderer;
     if (!r) return;
-    const objs = [this.ball.group, this.calDots, this.headDot];
+    const objs = [this.ball.group, this.calDots, this.headDot, this.mitt.group, this.callout.mesh];
     const was = objs.map((o) => o.visible);
     try {
       objs.forEach((o) => (o.visible = true));
@@ -317,6 +340,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       guide: this.guide,
       streak: this.streak,
       bestStreak: this.bestStreak,
+      hand: this.hand.pitches > 0 ? this.hand.summary() : null,
       inHub: IN_HUB,
     };
   }
@@ -454,6 +478,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
           this.flash = null;
           this.streak = 0;
           this.bestStreak = 0;
+          this.hand.reset();
+          this.clearHeld();
           this.finishedTs = null;
           this.nextAt = null;
           this.toReady();
@@ -463,7 +489,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       case 'btn:exit2':
         this.cur = null;
         this.roll = null;
-    this.ball.show(false);
+        this.hand.reset();
+        this.clearHeld();
+        this.ball.show(false);
         this.flash = null;
         this.finishedTs = null;
         this.nextAt = null;
@@ -590,6 +618,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (!b) return;
     this.cur = { ...b, startAt: this.time + SETTLE, started: false, released: false, plan: null, dur: 0, t0: 0, locked: false, onSince: null, offSince: null, trial: null };
     this.nextAt = null;
+    this.clearHeld(); // the caught ball goes back to the pitcher; the mitt opens
     const p = this.scene3d.pitcher;
     p.held = 'hand'; // the ball sits in his fingers from the start
     p.signal('nod');
@@ -603,6 +632,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.cur = null;
     this.nextAt = null;
     this.roll = null;
+    this.clearHeld();
+    this.callout.hide();
     this.ball.show(false);
     this.scene3d.pitcher.reset();
     if (f.interrupt()) this.showPhase();
@@ -653,19 +684,36 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       this.ball.show(true);
       const axis = spinAxis(c.plan.pitch);
       this.ball.setSpin([axis.x, axis.y, axis.z], drawnRps(c.plan.pitch));
-      this.sfx.play('ui', 0.3); // the release: the ball is away
+      c.prev = [this.local.x, this.local.y, this.local.z]; // the catch test needs the ball's last position
+      this.anchor.localToWorld(this.world3.copy(this.local));
+      const pitchKmh = (c.plan.speed || 40) * 3.6;
+      this.sfx.play('pitch', 0.5, { kmh: pitchKmh, pos: this.world3 });
     }
     const ms = (time - c.t0) * 1000;
     if (ms >= c.dur) {
       // Past the arrival point the ball keeps flying past the player, lands behind them and stays there. Scoring ended at arrival.
-      c.roll ??= startRoll((u) => ballPosition(u, c.plan), c.dur);
+      // clearIn3d: the ball only swerves aside if it would really pass the eyes, so a pitch to the zone carries straight on through
+      // the catching zone, where the mitt can meet it.
+      c.roll ??= startRoll((u) => ballPosition(u, c.plan), c.dur, 0.5, true);
+      if (c.caught) {
+        this.placeHeld();
+        if (time - c.caught.at >= CATCH.holdS) this.finishBall(time);
+        return;
+      }
       stepRoll(c.roll, dt);
+      this.tryCatch(c, c.roll.p, c.roll.v, time);
+      if (c.caught) {
+        this.placeHeld();
+        return;
+      }
+      if (!c.handDone && c.roll.p[2] > CATCH.missZ) this.resolveHand(c, false, time); // it went by
       this.placeRoll(c.roll, dt);
       if (c.roll.p[2] >= 1.0 || c.roll.rest) this.finishBall(time);
       return;
     }
     const t01 = ms / c.dur;
     const p = ballPosition(t01, c.plan);
+    c.prev = p; // the mitt's turn comes after the arrival; until then only the position is kept
     this.local.set(p[0], p[1], p[2]);
     this.world3.copy(this.local);
     this.anchor.localToWorld(this.world3);
@@ -732,6 +780,97 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.ball.place(this.local, this.world3.distanceTo(this.o), this.o, dt);
   }
 
+  // ------------------------------------------------------------------ catching
+  // Did the mitt meet the ball between the last frame and this one? p: the ball now, v: its velocity (eye frame). On a catch the
+  // ball sticks in the pocket (with the mitt's recoil, a pop and a pulse); the umpire calls it, and the catch is counted.
+  tryCatch(c, p, v, time) {
+    const prev = c.prev;
+    c.prev = [p[0], p[1], p[2]];
+    const m = this.mitt;
+    if (!m.ok || !m.prevOk) return false;
+    c.mittSeen = true;
+    if (c.handDone || !prev) return false;
+    const hit = sweepCatch(prev, p, [m.prevPocket.x, m.prevPocket.y, m.prevPocket.z], [m.pocket.x, m.pocket.y, m.pocket.z]);
+    if (!hit) return false;
+    if (!mittFacesBall([m.normal.x, m.normal.y, m.normal.z], v)) {
+      this.resolveHand(c, false, time, { why: 'back' }); // off the back of the mitt
+      return false;
+    }
+    // Where on the mitt it landed, and where it rests there (the mitt's own space).
+    this.anchor.updateMatrixWorld(true);
+    m.group.updateMatrixWorld(true);
+    this.world3.set(hit.ball[0], hit.ball[1], hit.ball[2]);
+    this.anchor.localToWorld(this.world3);
+    m.group.worldToLocal(this.world3);
+    const spot = catchSpot(this.world3.x, this.world3.y);
+    const rest = m.mitt.restPoint(this.world3.x, this.world3.y, BALL_R, new Vector3());
+    const speed = Math.hypot(v[0], v[1], v[2]);
+    c.caught = { at: time, rest, spot };
+    m.hold = 1;
+    if (speed > 0) m.impact(this.local.set(v[0] / speed, v[1] / speed, v[2] / speed), speed);
+    m.pulse(Math.min(1, 0.6 + speed / 60), 45);
+    this.anchor.localToWorld(this.world3.set(hit.ball[0], hit.ball[1], hit.ball[2]));
+    this.sfx.play('glove', 0.35 + 0.35 * Math.min(1, speed / 40), { kmh: Math.max(60, speed * 3.6), pos: this.world3 });
+    this.resolveHand(c, true, time, { spot });
+    this.caughtOnce = true;
+    this.roll = null;
+    if (import.meta.env.DEV) console.info(`[otb] caught ${spot} ball=${speed.toFixed(1)}m/s`);
+    return true;
+  }
+
+  // The pitch is decided (caught, off the back of the mitt, or gone by): the umpire calls it and the hand tally takes it. A pitch the
+  // mitt never took part in (no hand tracked all the way) is not counted at all: like a sensor failure, never a "miss".
+  resolveHand(c, caught, time, extra = {}) {
+    if (c.handDone) return;
+    c.handDone = true;
+    if (!caught && !c.mittSeen) return;
+    const res = this.hand.record(
+      { caught, off: pitchOffset(c.plan), mittSpeed: this.mitt.speed(time), spot: extra.spot, why: extra.why ?? 'missed' },
+      { count: !c.warmup },
+    );
+    this.callout.show(res);
+    if (import.meta.env.DEV) console.info(`[otb] hand ${caught ? 'catch' : 'miss'} ${res.sub} catches=${this.hand.catches}/${this.hand.pitches}`);
+  }
+
+  // Where the caught ball sits, in the eye frame: in the mitt's pocket, moving with the hand.
+  placeHeld() {
+    const h = this.held ?? this.cur?.caught;
+    if (!h) return;
+    this.mitt.group.updateMatrix();
+    this.local.copy(h.rest).applyMatrix4(this.mitt.group.matrix);
+    this.ball.rest(this.local, this.local.length());
+  }
+
+  clearHeld() {
+    this.held = null;
+    this.mitt.hold = 0;
+  }
+
+  updateMitt(dt, time) {
+    const on = MITT_PHASES.has(this.flow.phase);
+    this.mitt.setEnabled(on);
+    this.mouseMitt.showHint(on && !this.caughtOnce);
+    this.mitt.update(this.anchor, dt, time);
+  }
+
+  // DEV ONLY (compiled out of production builds): where the simulated catcher holds the mitt. window.__otb.catcher = 'catch' puts it
+  // where the pitch will pass, 'miss' puts it well off to the side, null leaves the mouse or the hand in charge.
+  devMittPose() {
+    const mode = window.__otb?.catcher;
+    if (!mode) return null;
+    this._mp ??= new Vector3();
+    const c = this.cur;
+    if (c?.released && c.plan) {
+      if (c.devPass === undefined) {
+        const r = startRoll((u) => ballPosition(u, c.plan), c.dur, 0.5, true);
+        for (let i = 0; i < 600 && r.p[2] < -0.62 && !r.rest; i++) stepRoll(r, 0.004);
+        c.devPass = r.p.slice();
+      }
+      this._mp.set(c.devPass[0] + (mode === 'miss' ? 0.7 : 0), c.devPass[1], -0.62);
+    } else if (!this.held) this._mp.set(0.25, -0.45, -0.62);
+    return { p: this._mp };
+  }
+
   // DEV ONLY: point the emulator's simulated eyes at an object while the head stays still (calibration demo).
   devGazeAt(obj) {
     const gaze = window.IWER_DEVICE?.gaze;
@@ -784,8 +923,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const c = this.cur;
     const f = this.flow;
     const summary = c.trial.finish();
+    this.resolveHand(c, false, time); // a no-op when the mitt has already decided it
     this.cur = null;
-    this.roll = c.roll ?? null; // the ball is not removed: it keeps rolling behind the player and stays at rest
+    this.held = c.caught ?? null; // a caught ball stays in the mitt while the next pitch is set up
+    this.roll = c.caught ? null : c.roll ?? null; // otherwise the ball is not removed: it keeps rolling behind the player and stays at rest
     const entry = f.completeBall(summary, Date.now());
     if (!entry) return;
     if (import.meta.env.DEV) {
@@ -854,9 +995,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (this.needAnchor && inXR) this.tryAnchor();
     if (inXR) this.hideInputModels();
     this.rays.noteGaze(time);
+    if (this.world?.camera) this.sfx.updateListener(this.world.camera);
     this.updatePitcher(dt);
     this.ui.update();
     this.updateHeadDot();
+    this.updateMitt(dt, time); // before the ball moves, so the catch test uses this frame's mitt
 
     switch (this.flow.phase) {
       case PHASE.MODE:
@@ -876,11 +1019,13 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
           stepRoll(this.roll, dt);
           this.placeRoll(this.roll, dt);
         }
+        if (this.held) this.placeHeld();
         if (this.nextAt !== null && time >= this.nextAt && this.scene3d.pitcher.isSet) this.beginBall(); // the next pitch waits for him to be set
         break;
       default:
         break;
     }
+    this.callout.update(dt);
     if (this.flash && this.flash.until < time && this.flow.phase !== PHASE.SCORECARD) {
       this.flash = null;
       this.refreshUi();

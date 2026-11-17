@@ -2,13 +2,14 @@
 
 The player is the **catcher**, seated behind home plate. The pitcher stands on the mound, 18.44 m away, looks in, nods, winds up and
 throws, and the ball comes to you: it is gone about 1.2 m in front of your eyes, as it crosses the front of the plate. The player
-never hits, catches or touches the ball: they only watch it, and the eyes are the input. Same rules as cricket, football and tennis:
+never hits the ball, and the eyes are the input: the score is where you look. A mitt in your hand can then catch it (see **Hand play**
+below), which is a second, separate score. Same rules as cricket, football and tennis:
 watch the ball, get the count; green / amber / red / unscored; Eye mode only after a passed calibration; Head mode is separate and
 always labelled; a sensor failure is UNSCORED, never red.
 
 **The batsman's view stays cricket's.** Baseball does not put you in the batter's box; you are behind the plate, where baseball-xr
 (`vr-games/baseball-xr`, "Glove Up") already puts you. This sub-project reuses that game's ballpark, pitcher, ball and pitch
-arsenal, and takes the player out of the catching: there is no mitt, no hand and nothing to touch.
+arsenal. The mitt on your hand is baseball-xr's catcher's mitt, and its catch and umpire scoring ("Glove Up") is brought in as hand play.
 
 Baseball is a sub-project of `on-the-ball`, built the same way football and tennis are. It has **no `node_modules` of its own**
 (Node finds the parent's), and it reuses the cricket build's scoring engine, gaze checks, session flow, history and panels
@@ -19,8 +20,8 @@ Baseball is a sub-project of `on-the-ball`, built the same way football and tenn
 ```
 npm run dev:baseball      # https://localhost:8087/   (from the on-the-ball folder)
 npm run build:baseball    # baseball/dist
-npm run test:baseball     # 45 baseball tests
-npm test                  # cricket + football + tennis + baseball (181 tests)
+npm run test:baseball     # 64 baseball tests (45 pitch / scoring, 19 hand play)
+npm test                  # cricket + football + tennis + baseball (236 tests)
 ```
 
 Through the hub (`vr-games`), baseball is served at `/ontheball/baseball/`, and the lobby has a tile for it (bottom row, left).
@@ -33,13 +34,39 @@ Through the hub (`vr-games`), baseball is served at `/ontheball/baseball/`, and 
 | `src/core/ball-path.js` | The park's real dimensions, the aim point, the solved flight from the pitcher's fingers to the plate, the comfort checks, the 20-pitch set |
 | `src/xr/ballpark.js` | The ballpark under the lights (copied from baseball-xr; only the way objects are added changed) |
 | `src/xr/pitcher.js` | The pitcher and his whole delivery, key-posed with two-bone IK (copied from baseball-xr; added `reset()`) |
-| `src/xr/glove.js` | The pitcher's glove (copied from baseball-xr, unchanged) |
+| `src/xr/glove.js` | The pitcher's glove and the catcher's mitt model (copied from baseball-xr, unchanged) |
+| `src/core/catching.js` | Hand play, pure maths: the swept catch test, the umpire (strike / ball / framed / stabbed), the catch tally |
+| `src/xr/mitt.js` | The mitt on the player's hand (controller or tracked hand), its recoil and haptics; the emulator's mouse mitt |
+| `src/xr/catch-callout.js` | The call-out after each pitch ("POP!", "CAUGHT! 3 in a row", "MISSED") with the umpire's call |
 | `src/xr/ball.js` | The baseball (baseball-xr's seam and stitching), its glow, the guide ring, the pitch's own spin |
 | `src/xr/baseball-scene.js` | Hangs the park and the pitcher on one group in the player's eye frame |
 | `src/game.js` | The game system (adapted from tennis's): settle, wind-up, release from his real fingers, flight, scoring |
 | `src/skin.js` | The words the shared panels use for baseball |
 | `public/` | The pitcher model (CC0 Quaternius, the same file baseball-xr ships), sounds, licences, the scene file (the SDK needs it inside the project) |
 | `tests/baseball.test.mjs` | Physics, comfort, scoring, adversarial and session tests |
+| `tests/catching.test.mjs` | The umpire, the catch test, the tally, and that every pitch type, speed, lane and row can be caught |
+
+## Hand play (the mitt)
+
+The catcher's mitt follows your hand (the left by default, the other hand if only that one is tracked). After the pitch has arrived,
+the ball carries on toward you through the catching zone; if it meets the pocket it is caught: the ball sticks in the mitt, the
+mitt recoils and snaps shut, the controller pulses, and there is a leather pop. The umpire then calls the pitch, as in Glove Up:
+inside the strike zone (the plate plus a ball's width, 42 cm high) is a STRIKE; a borderline ball caught quietly is *framed* into a
+strike; a borderline strike stabbed at with a fast mitt is called a ball. A call-out shows it, and the scorecard gains one line,
+"Mitt: 14 of 20 caught · 9 strikes (2 framed)".
+
+* **The eyes stay the score.** The green / amber / red trial still ends at the pitch's arrival, 1.2 m in front of your eyes, and the
+  mitt only gets the ball after that, so nothing the hand does can change the eye score (a test pins this). The hand tally is
+  separate: catches, misses, strikes called, framed, the run of catches in a row.
+* **A pitch the mitt took no part in is not counted.** No hand tracked (a headset with no controllers, Head mode with hands down)
+  means no catch tally and no "MISSED": like a sensor failure, never a miss. Warm-up and interrupted pitches are never counted.
+* **Every pitch can be caught.** A test flies every pitch type at every speed, lane, row and extreme command miss: each passes
+  within an arm's reach (x within 0.45 m, between 0.22 and 0.76 m below the eyes) and a mitt held there catches it. The catch test is
+  swept, so a 100 mph pitch cannot jump over the mitt between two frames.
+* **After the plate the ball carries on straight** (it only swerves aside if it would really hit your head), so a pitch to the zone
+  comes through where the mitt is.
+* **On the PC emulator** the mouse is the mitt (move it to where the ball is going); a headset never uses this. In dev builds
+  `window.__otb.catcher = 'catch' | 'miss'` puts a simulated catcher's mitt where the pitch will pass, or well off to the side.
 
 ## Design decisions
 
@@ -64,7 +91,8 @@ Through the hub (`vr-games`), baseball is served at `/ontheball/baseball/`, and 
   the ground, never closer than 1.1 m. The drawn ball is close to its real size: never under a 0.35 degree radius in flight (about 11 cm across at the mound, the real 7.4 cm inside 6 m) and about 9 cm in the pitcher's hand; the white guide ring, not the ball's size, is what marks it from far away.
 * **A bad release point cannot hurt.** The hand position the game feeds in is pulled back into the box a pitcher's hand can be in,
   and every field of a delivery is cleaned (NaN, strings, huge numbers) before it moves the ball.
-* **No scoring changes.** Tolerances, coverage and quality rules are the shared ones, untouched (a test pins them).
+* **No eye-scoring changes.** Tolerances, coverage and quality rules are the shared ones, untouched (a test pins them). Hand play
+  adds a second score beside them; it never replaces or alters them.
 * **Shared changes made outside this folder** (cricket, football and tennis behaviour unchanged, their 136 tests still pass): baseball
   is marked live in `src/core/flow.js`; two old tests that expected baseball to be unselectable now check that an unknown sport is
   refused; the hub server builds and mounts baseball; the lobby has a tile and a picture for it.
