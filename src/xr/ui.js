@@ -197,7 +197,7 @@ export class Ui {
       symbol(c, o.symbol, 56, h / 2, 26, o.color);
       text(c, o.word, 100, h / 2, { size: 38, weight: 800, color: o.color });
       const why = f.status === 'green' && f.streak >= 2 ? f.streak + ' in a row' : REASON_NOTE[f.reason] ?? o.note;
-      const note = f.status === 'unscored' ? o.note : why + ' · tracking ' + Math.round((f.quality ?? 0) * 100) + '%';
+      const note = f.status === 'unscored' ? o.note : why + ' · on ball ' + Math.round((f.coverage ?? 0) * 100) + '%';
       text(c, note, w - 30, h / 2, { size: 28, weight: 500, color: COLORS.dim, align: 'right' });
     });
 
@@ -205,7 +205,7 @@ export class Ui {
     this.add('pauseInfo', 1.4, 0.34, 0, 0.34, (c, w, h) => {
       panelBase(c, w, h);
       text(c, 'Paused', w / 2, 62, { size: 58, weight: 800, align: 'center' });
-      paragraph(c, 'The ball that was in flight was thrown away. It is not counted as a miss.', 60, 126, w - 120, { size: 31, color: COLORS.dim, align: 'center' });
+      paragraph(c, 'The ball that was in flight was thrown away. It is not counted as a miss.', 60, 126, w - 120, { size: 32, color: COLORS.text, align: 'center' });
     });
     this.add('btn:resume', 0.5, 0.2, -0.56, -0.05, (c, w, h, f) => pill(c, 4, 4, w - 8, h - 8, 'Resume', { ...f, primary: true }), { interactive: true });
     this.add('btn:retry', 0.5, 0.2, 0, -0.05, (c, w, h, f) => pill(c, 4, 4, w - 8, h - 8, 'Start over', f), { interactive: true });
