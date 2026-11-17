@@ -5,8 +5,8 @@ official Meta Immersive Web SDK (IWSDK 1.1.0) from the VEGAH handoff baseline (`
 
 ## The experience
 1. Sit down, put on the glasses or headset, press **Enter VR**.
-2. The app opens on the four sport tiles (deck slide 4). Look at a sport and pinch to select it; the white ring sits on the
-   one you are looking at. Cricket is live; baseball, tennis and football show "coming soon".
+2. The app opens straight on cricket. The other three sports are their own sub-projects (see "The four sports" below) and the
+   hub lobby has a tile for each; look at a tile and pinch to open it.
 3. Choose how the ball is followed: **Eye tracking** (after a 10-second calibration) or **Head mode**.
 4. You are the **batsman**: you take guard at the crease, your stumps behind you, the bowler 22 yards away. One warm-up ball,
    then 20 deliveries come at you on three lines (left, straight, right) and varying lengths. The ball is a red cricket
@@ -17,6 +17,19 @@ official Meta Immersive Web SDK (IWSDK 1.1.0) from the VEGAH handoff baseline (`
 Hands are only for navigation (look + pinch, or hand ray + pinch). Pause, start over and exit are always available.
 The X on the scorecard ("Done") goes back to the sport tiles. A pause, a hidden page, the end of the XR session or a
 recenter throws away the ball in flight; it is replayed, never scored as a miss.
+
+## The four sports
+All four are watch-only, seated, twenty balls and the same scoring, and they share the engine in `src/core` and the panels in
+`src/xr`. Each sport is a different **view**, and the batsman's view belongs to cricket alone.
+
+| Sport | Where | Your seat | Port | Hub path | Tests |
+|---|---|---|---|---|---|
+| Cricket | `src/` (this folder) | the batsman at the crease, stumps behind you | 8084 | `/ontheball/` | `tests/` |
+| Football | `football/` | the goalkeeper | 8085 | `/ontheball/football/` | `football/tests/` |
+| Tennis | `tennis/` | the receiver on the baseline | 8086 | `/ontheball/tennis/` | `tennis/tests/` |
+| Baseball | `baseball/` | the catcher, behind home plate | 8087 | `/ontheball/baseball/` | `baseball/tests/` |
+
+`npm test` runs all of them. Football, tennis and baseball have no `node_modules` of their own (Node finds this folder's).
 
 ## Scoring (baseline rules, kept)
 - At least 75% of the flight must be validly tracked, otherwise **UNSCORED**. A sensor gap is never the player's miss.
