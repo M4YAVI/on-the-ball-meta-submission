@@ -1,7 +1,8 @@
 // The shot path for FOOTBALL, seen from the GOALKEEPER's eyes, and the rules that keep it comfortable on Meta VR Glasses.
 //
-// Product direction: the player sits in goal and watches 20 shots come at them from the edge of the penalty area. They never
-// save, catch or touch the ball: they only watch it, and the eyes are the input (deck: "Watch the ball. Get the count.").
+// Product direction: the player sits in goal and watches 20 shots come at them from the edge of the penalty area. The eyes are the
+// input and the score (deck: "Watch the ball. Get the count."). The gloves (hand play, core/goalkeeping.js) only get the ball
+// after its arrival point, where the eye score has ended.
 //
 // Coordinates are in the viewer's frame, the same as cricket: x to the right, y up from the eye, z negative straight ahead.
 // The scene is placed so that frame follows the seated player's eye position, so a shot looks the same whatever their height.
