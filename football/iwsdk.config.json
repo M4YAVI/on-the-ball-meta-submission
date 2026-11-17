@@ -17,5 +17,5 @@
       "gaze": { "logDiagnostics": true, "suppressWhenDirectPointerActive": false }
     }
   },
-  "dev": { "emulator": { "device": "metaVRGlasses", "injectOnBuild": true, "activation": "always" } }
+  "dev": { "emulator": { "device": "metaQuestPro", "injectOnBuild": true, "activation": "always" } }
 }

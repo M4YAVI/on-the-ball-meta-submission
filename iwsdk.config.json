@@ -51,7 +51,7 @@
   },
   "dev": {
     "emulator": {
-      "device": "metaVRGlasses",
+      "device": "metaQuestPro",
       "injectOnBuild": true,
       "activation": "always"
     }
