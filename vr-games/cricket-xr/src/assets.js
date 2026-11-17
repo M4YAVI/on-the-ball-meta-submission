@@ -26,4 +26,5 @@ export default defineAssets({
   // Rigged hand (MIT, @webxr-input-profiles/assets): the mouse-controlled hand on a PC. In a headset the
   // SDK loads hand-left/right.glb itself for the tracked hands (see src/hands.js).
   'hand-right': model('hand-right.glb', 'Right hand'),
+  'hand-left': model('hand-left.glb', 'Left hand'),
 });

@@ -523,3 +523,31 @@ test('every joint the hand reports is used: a pose-built hand has its finger bon
 });
 
 // ---------- two cupped hands: a first touch a frame before the other hand's is still a two-handed catch ----------
+
+test('cupped hands side by side: a ball off-centre by a few cm is two-handed whichever frame it first touches a hand', () => {
+  const dec = createDecision();
+  let twoHanded = 0;
+  let total = 0;
+  // Slide where the frame boundaries fall (phase) and how far off-centre the ball is.
+  for (let off = -0.03; off <= 0.0301; off += 0.01) {
+    for (let phase = 0; phase < 0.23; phase += 0.01) {
+      const L = createHand('left');
+      const R = createHand('right');
+      setHandFromPose(L, V([-0.045, 1.1, -0.6]), V([0.13, 0.74, -0.66]), V([0.14, -0.67, -0.72]), 0.7);
+      setHandFromPose(R, V([0.045, 1.1, -0.6]), V([-0.13, 0.74, -0.66]), V([-0.14, -0.67, -0.72]), 0.7);
+      const prev = new Vector3();
+      const pos = new Vector3(off, 1.14, -3 - phase);
+      let outcome = 'none';
+      for (let i = 0; i < 60 && outcome === 'none'; i++) {
+        prev.copy(pos);
+        pos.z += 0.22; // 13 m/s at 60 fps
+        evaluateCatch(L, R, prev, pos, V([0, 0, 13]), 0.05, SHOULDERS, dec);
+        outcome = dec.outcome;
+      }
+      assert.equal(outcome, 'catch', `off ${off.toFixed(2)} phase ${phase.toFixed(2)}`);
+      total++;
+      if (dec.twoHand) twoHanded++;
+    }
+  }
+  assert.equal(twoHanded, total, `${twoHanded} of ${total} were two-handed`);
+});

@@ -717,20 +717,18 @@ export class GameSystem extends createSystem({}) {
     (inSession ? this.player.head : this.world.camera).getWorldPosition(this.head);
     (inSession ? this.player.head : this.world.camera).getWorldQuaternion(this.headQ);
 
-    this.desktop.update(this.player);
+    this.desktop.update(this.player, this, dt);
     if (this.desktop.active) {
-      const mode = this.desktop.handMode;
-      const both = mode === 'both';
+      // The mouse hands: the lead hand on the pointer, and the partner hand once it has come across
+      // to make a two-handed cup (a ball at the body, or 'both' mode). Contact stays a round volume.
       for (const side of ['left', 'right']) {
         const h = this.hands[side];
-        const used = both || mode === side || (mode !== 'left' && side === 'right');
-        if (!used) {
+        const p = this.desktop.palms[side];
+        if (!p) {
           invalidateHand(h);
           continue;
         }
-        this.tmp.copy(this.desktop.position);
-        if (both) this.tmp.x += side === 'left' ? -0.06 : 0.06;
-        setHandFromPoint(h, this.tmp);
+        setHandFromPoint(h, p);
       }
     } else {
       const J = this.J;

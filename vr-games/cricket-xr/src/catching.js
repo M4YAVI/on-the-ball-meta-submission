@@ -593,7 +593,13 @@ export function evaluateCatch(L, R, prevBall, nowBall, ballVel, ballR, shoulders
   const dr = out.point.distanceTo(R.palm);
   const single = catchHand || (dl <= dr ? L : R);
   const cs = single === L ? cL : cR;
-  out.twoHand = pocket || (cL.result === 'catch' && cR.result === 'catch' && out.cupReady);
+  // Two cupped hands: both touch it, or the ball reaches the pocket between them, or it touches one while the
+  // other is a finger's width from it on the same frame (the first touch can fall a frame before the second;
+  // the hands close on it together, so it is still a two-handed catch).
+  const other = single === L ? R : L;
+  const otherC = single === L ? cR : cL;
+  const otherNear = out.cupReady && cs.hit && cs.result === 'catch' && !other.fist && other.hasNormal && otherC.gap <= CFG.cuppedBonus + CFG.twoHandNear && (!otherC.hit || otherC.result === 'catch');
+  out.twoHand = pocket || (cL.result === 'catch' && cR.result === 'catch' && out.cupReady) || otherNear;
   out.side = out.twoHand ? (dl <= dr ? 'left' : 'right') : single.side;
   out.relSpeed = cs.hit ? cs.relSpeed : _bv.copy(ballVel).sub(single.vel).length();
   out.quality = cs.hit && cs.result === 'catch' ? cs.quality : 0.6;

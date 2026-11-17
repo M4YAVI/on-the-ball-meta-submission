@@ -41,6 +41,7 @@ export const CFG = {
   movingHands: 0.9, // m/s hand speed: caught on the move
   settleTime: 0.14, // seconds for a caught ball to settle into the palm (cushioned, no snapping)
   twoHandGap: 0.28, // palms closer than this together can make a two-handed cup
+  twoHandNear: 0.03, // cupped hands: the ball touches one, and the other is within this (beyond the cup's reach) of touching it on the same frame (they close on it together)
   nearMiss: 0.4, // a miss closer than this tells you by how much
   arriveZ: -0.65, // how far in front of the player the ball arrives: comfortable arm's reach
   targetSpreadX: 0.35, // random arrival offset left/right (kept inside the headset's field of view)
