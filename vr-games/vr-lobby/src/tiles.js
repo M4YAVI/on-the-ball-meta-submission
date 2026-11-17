@@ -168,6 +168,50 @@ class GazeRing {
   }
 }
 
+// The two sections of the grid: a heading across the top for the hands-only games, and a line with a heading
+// under it for the eyes games. Drawn in the room the grid leaves for them (see gridSize in config.js).
+function sectionLabel(renderer, width, height, text, colour) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2560; // read from ~1.7 m, so it needs the pixels
+  canvas.height = Math.round((2560 * height) / width);
+  const g = canvas.getContext('2d');
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  g.fillStyle = colour;
+  g.font = `bold ${Math.round(canvas.height * 0.62)}px sans-serif`;
+  g.textBaseline = 'middle';
+  g.fillText(text, 8, canvas.height / 2, canvas.width - 16);
+  const mesh = new Mesh(
+    new PlaneGeometry(width, height),
+    new MeshBasicMaterial({ map: texture(canvas, renderer), transparent: true, depthWrite: false }),
+  );
+  return mesh;
+}
+
+function sectionMarks(renderer, size, rects) {
+  const group = new Group();
+  const hd = CFG.grid.headingH;
+  const top = size.h / 2;
+  group.add(sectionLabel(renderer, size.w, 0.06, 'HANDS ONLY', '#d9f2dc'));
+  group.children[0].position.set(0, top - hd / 2, 0.001);
+
+  // The gap under the first row: the line sits in the middle, the eyes heading just under it.
+  const firstEyesRow = rects.findIndex((r, i) => CFG.games[i].row === 1);
+  if (firstEyesRow < 0) return group;
+  const rowBottom = rects[0].y - rects[0].h / 2;
+  const eyesTop = rects[firstEyesRow].y + rects[firstEyesRow].h / 2;
+  const lineY = (rowBottom + eyesTop) / 2;
+  const line = new Mesh(
+    new PlaneGeometry(size.w, 0.004),
+    new MeshBasicMaterial({ color: 0x9ad3ad, transparent: true, opacity: 0.85, depthWrite: false }),
+  );
+  line.position.set(0, lineY, 0.001);
+  group.add(line);
+  const eyes = sectionLabel(renderer, size.w, 0.06, 'GAZE ONLY', '#d9f2dc');
+  eyes.position.set(0, lineY - 0.05, 0.001);
+  group.add(eyes);
+  return group;
+}
+
 export class TileGrid {
   constructor(world) {
     this.root = new Group();
@@ -176,6 +220,7 @@ export class TileGrid {
     const renderer = world.renderer;
     this.tiles = CFG.games.map((game, i) => new SportTile(game, this.rects[i], renderer));
     for (const t of this.tiles) this.root.add(t.mesh);
+    this.root.add(sectionMarks(renderer, this.size, this.rects));
     this.ring = new GazeRing();
     this.root.add(this.ring.mesh);
     this.focused = -1;

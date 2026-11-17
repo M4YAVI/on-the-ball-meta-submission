@@ -55,7 +55,15 @@ test('Gaze: each tile is picked from its own centre, and off the grid is nothing
 
 test('Gaze: there is no dead strip in the gap between two tiles', () => {
   assert.notEqual(pick((at('baseball').x + at('cricket').x) / 2, at('cricket').y), -1, 'between Glove Up and Cricket Catch');
-  assert.notEqual(pick(at('baseball').x, (at('baseball').y + at('ontheball').y) / 2), -1, 'between the top row and the second');
+  assert.notEqual(pick(at('ontheball').x, (at('ontheball').y + at('ontheballbaseball').y) / 2), -1, 'between the eyes rows (an ordinary gap)');
+});
+
+test('Layout: the line between the hands-only and eyes games sits in the section gap, with no tile on it', () => {
+  const rowBottom = at('baseball').y - at('baseball').h / 2; // bottom of the hands-only row
+  const eyesTop = at('ontheball').y + at('ontheball').h / 2; // top of the first eyes row (it sits lower)
+  const lineY = (rowBottom + eyesTop) / 2;
+  assert.ok(rowBottom - eyesTop > CFG.grid.gap * 3, 'the section gap is wider than an ordinary gap');
+  assert.equal(pick(at('cricket').x, lineY), -1, 'the line is not a tile');
 });
 
 test('Gaze: the ring stays put until the eyes have clearly left the tile', () => {

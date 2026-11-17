@@ -14,6 +14,8 @@ export const CFG = {
     tileW: 0.62,
     tileH: 0.35,
     gap: 0.03,
+    sectionGap: 0.16, // the room between the hands-only games (top row) and the eyes games (below the line)
+    headingH: 0.08, // the band across the top of the grid for the "HANDS ONLY" heading
     cornerR: 0.008,
     stickiness: 0.025, // the gaze must leave the focused tile by this much to move on, so the ring does not flicker
   },
@@ -58,7 +60,7 @@ export const CFG = {
       col: 0,
       port: 8084,
       storageKey: 'otb-best-green',
-      bestSuffix: ' / 20 green',
+      bestSuffix: ' / 20 good sight',
     },
     {
       id: 'ontheballfootball',
@@ -69,7 +71,7 @@ export const CFG = {
       port: 8085,
       path: 'ontheball/football', // where the hub serves it
       storageKey: 'otb-football-best-green',
-      bestSuffix: ' / 20 green',
+      bestSuffix: ' / 20 good sight',
     },
     {
       id: 'ontheballtennis',
@@ -80,7 +82,7 @@ export const CFG = {
       port: 8086,
       path: 'ontheball/tennis', // where the hub serves it
       storageKey: 'otb-tennis-best-green',
-      bestSuffix: ' / 20 green',
+      bestSuffix: ' / 20 good sight',
     },
     {
       id: 'ontheballbaseball',
@@ -91,7 +93,7 @@ export const CFG = {
       port: 8087,
       path: 'ontheball/baseball', // where the hub serves it
       storageKey: 'otb-baseball-best-green',
-      bestSuffix: ' / 20 green',
+      bestSuffix: ' / 20 good sight',
     },
   ],
 };
@@ -103,25 +105,33 @@ function gridCounts(games) {
   return { cols, rows };
 }
 
-// Where each game's tile sits on the grid: centre and size in metres, with (0, 0) at the middle of the grid.
+// The grid has a heading band across its top, and a section gap after the first row (the line between the
+// hands-only games and the eyes games). Both are part of gridSize(), so the guide and the visor frame them too.
+export function gridSize(games = CFG.games, g = CFG.grid) {
+  const { cols, rows } = gridCounts(games);
+  const sections = rows > 1 ? g.sectionGap : 0;
+  return {
+    w: cols * g.tileW + (cols - 1) * g.gap,
+    h: g.headingH + rows * g.tileH + (rows - 1) * g.gap + sections,
+  };
+}
+
+// Where each game's tile sits on the grid: centre and size in metres, with (0, 0) at the middle of the whole grid.
 export function tileRects(games = CFG.games, g = CFG.grid) {
   const { cols, rows } = gridCounts(games);
   const pitchX = g.tileW + g.gap;
   const pitchY = g.tileH + g.gap;
+  const top = gridSize(games, g).h / 2 - g.headingH; // the top edge of the first row
   return games.map((game) => {
     const span = game.span || 1;
+    const section = game.row >= 1 && rows > 1 ? g.sectionGap : 0;
     return {
       x: (game.col + span / 2 - cols / 2) * pitchX,
-      y: ((rows - 1) / 2 - game.row) * pitchY,
+      y: top - game.row * pitchY - section - g.tileH / 2,
       w: span * g.tileW + (span - 1) * g.gap,
       h: g.tileH,
     };
   });
-}
-
-export function gridSize(games = CFG.games, g = CFG.grid) {
-  const { cols, rows } = gridCounts(games);
-  return { w: cols * g.tileW + (cols - 1) * g.gap, h: rows * g.tileH + (rows - 1) * g.gap };
 }
 
 export function getGameUrl(game) {

@@ -36,9 +36,9 @@ function startGameServers() {
       for (const { dir, port } of GAME_SERVERS) {
         if (await isPortOpen(port)) continue;
         const cwd = path.join(REPO_ROOT, dir);
-        const viteBin = path.join(cwd, 'node_modules', 'vite', 'bin', 'vite.js');
+        const viteBin = path.join(REPO_ROOT, 'node_modules', 'vite', 'bin', 'vite.js'); // the one install every app shares
         if (!existsSync(viteBin)) {
-          console.warn(`[lobby] ${dir} is not installed, run "npm install" there. Its tile will not open.`);
+          console.warn(`[lobby] the shared install is missing, run "npm install" in vr-games. ${dir}'s tile will not open.`);
           continue;
         }
         console.log(`[lobby] Starting ${dir} on port ${port}`);
