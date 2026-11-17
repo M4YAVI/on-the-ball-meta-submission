@@ -569,7 +569,7 @@ export class GameSystem extends createSystem({}) {
       }
     }
     this.fx.burst(this.ball.position); // at the point of contact
-    this.sound.caught();
+    this.sound.caught(this.kmh || 60);
     this.coach.cheer();
     this.hud.set({ score: this.score, focus: f });
     this.message(this.tut ? this.tutorialCaughtLine() : this.catchMessage(), COLORS.good, CFG.feedbackDelay);

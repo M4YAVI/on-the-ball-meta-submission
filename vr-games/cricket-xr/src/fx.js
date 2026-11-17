@@ -10,7 +10,7 @@ import {
 
 // Kenney sound effects (CC0), decoded on first use. Until a file is ready, the generated
 // tone for the same event plays instead, so the game is never silent.
-const FILES = { hit: 'hit', coin: 'coin', hurt: 'hurt', level: 'level_up', ui: 'ui' };
+const FILES = { catch: 'catch', hit: 'hit', coin: 'coin', hurt: 'hurt', level: 'level_up', ui: 'ui' };
 
 export class Sound {
   constructor() {
@@ -45,14 +45,15 @@ export class Sound {
     }
   }
 
-  // Plays a decoded file; returns false when it is not ready so the caller can fall back.
-  file(name, volume = 0.7) {
+    // Plays a decoded file; returns false when it is not ready so the caller can fall back.
+  file(name, volume = 0.7, rate = 1.0) {
     const buffer = this.buffers[name];
     if (!this.ctx || !buffer) return false;
     try {
       const src = this.ctx.createBufferSource();
       const gain = this.ctx.createGain();
       src.buffer = buffer;
+      src.playbackRate.value = rate;
       gain.gain.value = volume;
       src.connect(gain).connect(this.ctx.destination);
       src.start();
@@ -62,53 +63,102 @@ export class Sound {
     }
   }
 
-  tone(f0, f1, dur, type = 'triangle', volume = 0.2) {
-    if (!this.ctx) return;
-    try {
-      const t = this.ctx.currentTime;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(f0, t);
-      osc.frequency.exponentialRampToValueAtTime(f1, t + dur);
-      gain.gain.setValueAtTime(volume, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      osc.connect(gain).connect(this.ctx.destination);
-      osc.start(t);
-      osc.stop(t + dur);
-    } catch (e) {
-      /* sound is optional */
-    }
-  }
-
-  // Short noise burst: the bat hitting the ball (fallback for hit.ogg).
+  // English willow bat sweet spot crack (willow-on-leather nodal resonance)
   noiseCrack() {
     if (!this.ctx) return;
     try {
-      if (!this.noise) {
-        const n = Math.floor(this.ctx.sampleRate * 0.08);
-        this.noise = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
-        const d = this.noise.getChannelData(0);
-        for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 2;
-      }
-      const src = this.ctx.createBufferSource();
-      const gain = this.ctx.createGain();
-      src.buffer = this.noise;
-      gain.gain.value = 0.5;
-      src.connect(gain).connect(this.ctx.destination);
-      src.start();
-    } catch (e) {
-      /* sound is optional */
-    }
+      const t = this.ctx.currentTime;
+      // 1. Blade body fundamental
+      const bladeOsc = this.ctx.createOscillator();
+      const bladeGain = this.ctx.createGain();
+      bladeOsc.type = 'sine';
+      bladeOsc.frequency.setValueAtTime(260, t);
+      bladeOsc.frequency.exponentialRampToValueAtTime(140, t + 0.045);
+      bladeGain.gain.setValueAtTime(0.65, t);
+      bladeGain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      bladeOsc.connect(bladeGain).connect(this.ctx.destination);
+      bladeOsc.start(t);
+      bladeOsc.stop(t + 0.06);
+
+      // 2. English willow sweet spot modal resonance
+      const sweetOsc = this.ctx.createOscillator();
+      const sweetGain = this.ctx.createGain();
+      sweetOsc.type = 'triangle';
+      sweetOsc.frequency.setValueAtTime(960, t);
+      sweetOsc.frequency.exponentialRampToValueAtTime(800, t + 0.04);
+      sweetGain.gain.setValueAtTime(0.55, t);
+      sweetGain.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+      sweetOsc.connect(sweetGain).connect(this.ctx.destination);
+      sweetOsc.start(t);
+      sweetOsc.stop(t + 0.05);
+
+      // 3. Instantaneous strike snap
+      const snapOsc = this.ctx.createOscillator();
+      const snapGain = this.ctx.createGain();
+      snapOsc.type = 'sine';
+      snapOsc.frequency.setValueAtTime(3600, t);
+      snapGain.gain.setValueAtTime(0.45, t);
+      snapGain.gain.exponentialRampToValueAtTime(0.001, t + 0.015);
+      snapOsc.connect(snapGain).connect(this.ctx.destination);
+      snapOsc.start(t);
+      snapOsc.stop(t + 0.02);
+    } catch (e) {}
   }
 
   crack() {
     if (!this.file('hit', 0.9)) this.noiseCrack();
   }
 
-  caught() {
-    this.tone(660, 990, 0.22, 'triangle', 0.12);
-    if (!this.file('coin', 0.6)) this.tone(880, 1320, 0.18, 'triangle', 0.12);
+  // Flesh-on-hard-leather bare hand catch: cupped palm cavity pop + stinging skin slap + palm muscle shock thud
+  handCatch(speed = 60) {
+    if (!this.ctx) return;
+    try {
+      const t = this.ctx.currentTime;
+      const speedNorm = Math.min(1.3, Math.max(0.7, speed / 60));
+
+      // 1. Dense palm muscle shock thud
+      const thudOsc = this.ctx.createOscillator();
+      const thudGain = this.ctx.createGain();
+      thudOsc.type = 'sine';
+      thudOsc.frequency.setValueAtTime(190 * speedNorm, t);
+      thudOsc.frequency.exponentialRampToValueAtTime(75, t + 0.04);
+      thudGain.gain.setValueAtTime(0.75 * speedNorm, t);
+      thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      thudOsc.connect(thudGain).connect(this.ctx.destination);
+      thudOsc.start(t);
+      thudOsc.stop(t + 0.06);
+
+      // 2. Cupped-palm air-pocket cavity pop (the hollow cupped hands acoustic)
+      const cavityOsc = this.ctx.createOscillator();
+      const cavityGain = this.ctx.createGain();
+      cavityOsc.type = 'triangle';
+      cavityOsc.frequency.setValueAtTime(520 * speedNorm, t);
+      cavityOsc.frequency.exponentialRampToValueAtTime(310, t + 0.035);
+      cavityGain.gain.setValueAtTime(0.55 * speedNorm, t);
+      cavityGain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+      cavityOsc.connect(cavityGain).connect(this.ctx.destination);
+      cavityOsc.start(t);
+      cavityOsc.stop(t + 0.045);
+
+      // 3. Stinging skin-on-leather slap transient
+      const slapOsc = this.ctx.createOscillator();
+      const slapGain = this.ctx.createGain();
+      slapOsc.type = 'triangle';
+      slapOsc.frequency.setValueAtTime(2600 * speedNorm, t);
+      slapGain.gain.setValueAtTime(0.50 * speedNorm, t);
+      slapGain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
+      slapOsc.connect(slapGain).connect(this.ctx.destination);
+      slapOsc.start(t);
+      slapOsc.stop(t + 0.03);
+    } catch (e) {}
+  }
+
+  caught(speed = 60) {
+    const jitter = 1.0 + (Math.random() * 2 - 1) * 0.04;
+    const rate = Math.min(1.25, Math.max(0.85, speed / 60)) * jitter;
+    if (!this.file('catch', 0.85, rate)) {
+      this.handCatch(speed);
+    }
   }
 
   missed() {

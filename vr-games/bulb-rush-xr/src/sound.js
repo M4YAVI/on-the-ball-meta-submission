@@ -52,6 +52,7 @@ export class Sound {
       }
       if (this.ctx.state === 'suspended') this.ctx.resume();
       if (!this.primed) {
+        this.preloadTap();
         // Run one silent note through the whole chain so the first real sound has no start-up cost.
         this.primed = true;
         this.tone(this.dest({ x: 0, y: 0, z: -1 }), 440, 440, 0.02, 'sine', 0.0001);
@@ -252,6 +253,63 @@ export class Sound {
     }
   }
 
+  preloadTap() {
+    try {
+      const base = import.meta.env?.BASE_URL || './';
+      fetch(`${base}audio/bulb-tap.ogg`)
+        .then((r) => r.arrayBuffer())
+        .then((data) => this.ctx.decodeAudioData(data))
+        .then((buf) => { this.tapBuffer = buf; })
+        .catch(() => {});
+    } catch (_) {}
+  }
+
+  playTap(dest, pitchMultiplier = 1.0) {
+    if (!this.ctx || !dest) return;
+    if (this.tapBuffer) {
+      try {
+        const src = this.ctx.createBufferSource();
+        const gain = this.ctx.createGain();
+        src.buffer = this.tapBuffer;
+        src.playbackRate.value = pitchMultiplier * (1.0 + (Math.random() * 2 - 1) * 0.04);
+        gain.gain.value = 0.65;
+        src.connect(gain).connect(dest);
+        src.start();
+        return;
+      } catch (_) {}
+    }
+    this.glassTap(dest, pitchMultiplier);
+  }
+
+  glassTap(dest, pitchMultiplier = 1.0) {
+    if (!this.ctx || !dest) return;
+    try {
+      const t = this.ctx.currentTime;
+      const jitter = (1.0 + (Math.random() * 2 - 1) * 0.05) * pitchMultiplier;
+
+      const pingOsc = this.ctx.createOscillator();
+      const pingGain = this.ctx.createGain();
+      pingOsc.type = 'sine';
+      pingOsc.frequency.setValueAtTime(4400 * jitter, t);
+      pingOsc.frequency.exponentialRampToValueAtTime(3200 * jitter, t + 0.035);
+      pingGain.gain.setValueAtTime(0.35, t);
+      pingGain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+      pingOsc.connect(pingGain).connect(dest);
+      pingOsc.start(t);
+      pingOsc.stop(t + 0.045);
+
+      const clickOsc = this.ctx.createOscillator();
+      const clickGain = this.ctx.createGain();
+      clickOsc.type = 'triangle';
+      clickOsc.frequency.setValueAtTime(6200 * jitter, t);
+      clickGain.gain.setValueAtTime(0.25, t);
+      clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.018);
+      clickOsc.connect(clickGain).connect(dest);
+      clickOsc.start(t);
+      clickOsc.stop(t + 0.02);
+    } catch (_) {}
+  }
+
   // ----- events -----
   ping(pos) {
     // A target just lit: a short, soft cue that comes from its side.
@@ -262,12 +320,15 @@ export class Sound {
   hit(pos, streak) {
     const d = this.dest(pos);
     const f = LADDER[Math.min(streak, LADDER.length - 1)];
+    const pitchNorm = Math.min(1.4, Math.max(0.85, f / 440));
+    this.playTap(d, pitchNorm);
     this.tone(d, f, f * 1.01, 0.16, 'triangle', 0.24);
     this.tone(d, f * 2, f * 2, 0.09, 'sine', 0.1, 0.012);
   }
 
   gold(pos) {
     const d = this.dest(pos);
+    this.playTap(d, 1.3);
     [1046.5, 1318.5, 1568, 2093].forEach((f, i) => this.tone(d, f, f, 0.14, 'triangle', 0.2, i * 0.055));
   }
 
@@ -317,6 +378,7 @@ export class Sound {
   // Two linked bulbs hit together: a crackle of lightning.
   zap(pos) {
     const d = this.dest(pos);
+    this.playTap(d, 1.1);
     this.tone(d, 2600, 500, 0.16, 'sawtooth', 0.14);
     this.tone(d, 1900, 3200, 0.1, 'square', 0.05, 0.03);
   }

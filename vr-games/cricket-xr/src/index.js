@@ -1,9 +1,11 @@
 import { World } from '@iwsdk/core';
 import projectOptions from 'virtual:iwsdk-project';
 import { GameSystem } from './game.js';
+import { hideRemoteControlBadge } from './hide-emulator-badge.js';
 
 World.create(document.getElementById('scene-container'), projectOptions).then((world) => {
   window.__world = world;
+  hideRemoteControlBadge(); // emulator only: the "Remote Control Active" badge is not part of the game
   if (world.renderer?.shadowMap) {
     world.renderer.shadowMap.autoUpdate = false;
     world.renderer.shadowMap.needsUpdate = true;
