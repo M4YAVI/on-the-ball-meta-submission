@@ -29,6 +29,7 @@ import { CFG, RESTART_POS, RESTART_RADIUS } from './config.js';
 import { makeLabel } from './label.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
+import { EmulatorHands } from './emulator-hands.js';
 import { Effects, Sound } from './fx.js';
 import { trackedHands, useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
@@ -144,6 +145,10 @@ export class GameSystem extends createSystem({}) {
 
     this.desktop = new DesktopHand(this.world);
     this.cleanupFuncs.push(() => this.desktop.dispose());
+
+    // In the IWER emulator only (a headset has no IWER_DEVICE): plays the emulated hands like a fielder's.
+    this.emulatorHands = new EmulatorHands(this);
+    this.cleanupFuncs.push(() => this.emulatorHands.dispose());
 
     // Each hand as the catching rules see it (src/catching.js). The palm/normal arrays below alias its
     // vectors; they are what the tests and the HUD read.
@@ -296,6 +301,7 @@ export class GameSystem extends createSystem({}) {
       get nearest() { return this.sys.nearest; },
       get lastResult() { return this.sys.lastResult; },
       get twoHanded() { return this.sys.twoHanded; },
+      get emulatorHands() { return this.sys.emulatorHands; },
       get cupType() { return this.sys.cupType; },
       get tutorial() { return !!this.sys.tut; },
       get tutorialStage() { return this.sys.tut ? this.sys.tut.stage : null; },
@@ -810,6 +816,7 @@ export class GameSystem extends createSystem({}) {
     if (this.paused) return;
     this.updateCrouch(dt);
     this.readPalms(dt);
+    this.emulatorHands.update(dt);
     const inHeadset = !!this.world.session;
     this.focus.sample(this.player, this.world.camera, inHeadset, dt);
     if (this.state === 'swinging' || this.state === 'flying') {
