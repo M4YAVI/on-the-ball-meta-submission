@@ -8,6 +8,7 @@
 //   - A sensor failure gives UNSCORED, never red.
 //   - Only totals are kept. No gaze or head poses are stored.
 
+import { startRoll, stepRoll } from '../../src/core/ball-path.js';
 import { createSystem, Group, Mesh, MeshBasicMaterial, Pressed, Quaternion, RayInteractable, RingGeometry, SphereGeometry, Vector3, VisibilityState } from '@iwsdk/core';
 // The scoring engine, gaze checks, session flow, history and panels are the same ones cricket uses (../../src); only the
 // shot physics, the ground, the ball and the words are football's.
@@ -120,6 +121,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.ui = new Ui(this.world, this.anchorEntity, (id) => this.onPress(id), FOOTBALL_SKIN);
     this.anchor2D();
     this.toStart();
+    this.sharpenXR();
     this.prewarm();
 
     this.queries.pressed.subscribe('qualify', (entity) => this.ui.press(entity));
@@ -165,6 +167,18 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         const model = v[kind]?.[side]?.visual?.model;
         if (model && model.visible) model.visible = false;
       }
+    }
+  }
+
+  // Sharper picture in the headset: a bigger render target than the default and no foveated (blurred) edges. Must be set
+  // before the VR session starts, so it is done here at load. An optimisation only: the game works without it.
+  sharpenXR() {
+    try {
+      const xr = this.world.renderer?.xr;
+      xr?.setFramebufferScaleFactor?.(1.3);
+      xr?.setFoveation?.(0);
+    } catch (_) {
+      /* keep the defaults */
     }
   }
 
@@ -462,7 +476,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       case 'btn:exit':
       case 'btn:exit2':
         this.cur = null;
-        this.ball.show(false);
+        this.roll = null;
+    this.ball.show(false);
         this.flash = null;
         this.finishedTs = null;
         this.nextAt = null;
@@ -597,22 +612,35 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (f.phase !== PHASE.PLAYING && f.phase !== PHASE.BETWEEN) return;
     this.cur = null;
     this.nextAt = null;
+    this.roll = null;
     this.ball.show(false);
     this.readyDot.visible = false;
     this.scene3d.setDelivery(null);
     if (f.interrupt()) this.showPhase();
   }
 
+  placeRoll(r, dt) {
+    this.local.set(r.p[0], r.p[1], r.p[2]);
+    this.world3.copy(this.local);
+    this.anchor.localToWorld(this.world3);
+    this.ball.coast(this.local, this.world3.distanceTo(this.o), r.rest ? 0 : dt);
+  }
+
   stepPlay(dt, time) {
     const c = this.cur;
     if (!c) return;
+    this.roll = null;
     const f = this.flow;
     const lead = time - c.t0;
     if (lead < 0) {
       this.scene3d.setDelivery(lead); // seconds to the strike: the striker draws his foot back
-      const k = Math.min(1, (lead + LEAD_IN) / 0.35); // fade in, then a gentle pulse
-      this.readyDot.visible = true;
-      this.readyDot.material.opacity = k * (0.55 + 0.2 * Math.sin(time * 9));
+      // The real football is on the spot from the start, so the eyes begin on the actual ball.
+      this.readyDot.visible = false;
+      const p0 = ballPosition(0, c.delivery.lane, c.delivery.curve, c.delivery.height, c.kmh, c.delivery.dip);
+      this.local.set(p0[0], p0[1], p0[2]);
+      this.world3.copy(this.local);
+      this.anchor.localToWorld(this.world3);
+      this.ball.rest(this.local, this.world3.distanceTo(this.o), dt);
       return;
     }
     if (!c.released) {
@@ -624,7 +652,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.scene3d.setDelivery(lead); // seconds since the strike: the follow-through after the ball has gone
     const ms = lead * 1000;
     if (ms >= c.dur) {
-      this.finishBall(time);
+      // Past the arrival point the ball keeps flying past the player, lands behind them and stays there. Scoring ended at arrival.
+      c.roll ??= startRoll((u) => ballPosition(u, c.delivery.lane, c.delivery.curve, c.delivery.height, c.kmh, c.delivery.dip), c.dur);
+      stepRoll(c.roll, dt);
+      this.placeRoll(c.roll, dt);
+      if (c.roll.p[2] >= 1.0 || c.roll.rest) this.finishBall(time);
       return;
     }
     const t01 = ms / c.dur;
@@ -748,7 +780,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const f = this.flow;
     const summary = c.trial.finish();
     this.cur = null;
-    this.ball.show(false);
+    this.roll = c.roll ?? null; // the ball is not removed: it keeps rolling behind the player and stays at rest
     const entry = f.completeBall(summary, Date.now());
     if (!entry) return;
     if (import.meta.env.DEV) {
@@ -762,7 +794,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       else if (summary.status !== STATUS.UNSCORED) this.streak = 0;
       this.bestStreak = Math.max(this.bestStreak, this.streak);
     }
-    this.flash = { status: summary.status, reason: summary.reason, quality: summary.quality, streak: entry.warmup ? 0 : this.streak, until: time + GAP - 0.3 };
+    this.flash = { status: summary.status, reason: summary.reason, quality: summary.quality, coverage: summary.coverage, streak: entry.warmup ? 0 : this.streak, until: time + GAP - 0.3 };
     if (summary.status === STATUS.GREEN) this.sfx.play('good', this.streak >= 3 ? 0.55 : 0.4);
     if (f.phase === PHASE.SCORECARD) {
       this.finishSession();
@@ -829,6 +861,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         this.stepPlay(dt, time);
         break;
       case PHASE.BETWEEN:
+        if (this.roll) {
+          stepRoll(this.roll, dt);
+          this.placeRoll(this.roll, dt);
+        }
         if (this.nextAt !== null && time >= this.nextAt) this.beginBall();
         break;
       default:

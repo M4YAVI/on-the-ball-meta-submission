@@ -19,46 +19,46 @@ function canvasTex(w, h, draw) {
   draw(c.getContext('2d'), w, h);
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
+  t.anisotropy = 8;
   return t;
 }
 
-// White leather with the 12 dark pentagons of a truncated icosahedron, laid out on an equirectangular map. The pentagons sit
-// at the icosahedron's vertices: the two poles and two rings of five at +/-26.57 degrees latitude.
+// A real football: white leather with 12 black pentagons and 20 white hexagons (a truncated icosahedron), seams between every
+// panel. Painted per pixel from the nearest panel centre, so the panels meet the way they do on the real ball and nothing is
+// stretched at the poles.
 export function footballTexture() {
-  return canvasTex(512, 256, (g, W, H) => {
-    const grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#f4f4ee');
-    grad.addColorStop(1, '#d9dad2');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, W, H);
-    const centres = [
-      [0, 90],
-      [0, -90],
-    ];
-    for (let k = 0; k < 5; k++) {
-      centres.push([k * 72, 26.57], [k * 72 + 36, -26.57]);
-    }
-    const lat0 = (lat) => ((90 - lat) / 180) * H;
-    const lon0 = (lon) => ((lon % 360) / 360) * W;
-    g.fillStyle = '#1b1d20';
-    g.strokeStyle = '#9a9c96';
-    g.lineWidth = 1.5;
-    for (const [lon, lat] of centres) {
-      const stretch = 1 / Math.max(0.18, Math.cos((lat * Math.PI) / 180)); // equirectangular maps squeeze the poles
-      for (const dx of [-W, 0, W]) {
-        g.beginPath();
-        for (let j = 0; j < 5; j++) {
-          const a = (j / 5) * Math.PI * 2 - Math.PI / 2;
-          const px = lon0(lon) + dx + Math.cos(a) * 26 * stretch * (Math.abs(lat) > 80 ? 3 : 1);
-          const py = lat0(lat) + Math.sin(a) * 26;
-          if (j === 0) g.moveTo(px, py);
-          else g.lineTo(px, py);
+  const phi = (1 + Math.sqrt(5)) / 2;
+  const norm = (v) => { const n = Math.hypot(...v); return [v[0] / n, v[1] / n, v[2] / n]; };
+  const pent = [];
+  for (const a of [-1, 1]) for (const b of [-phi, phi]) pent.push(norm([0, a, b]), norm([a, b, 0]), norm([b, 0, a]));
+  const hex = [];
+  for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) hex.push(norm([x, y, z]));
+  for (const a of [-1 / phi, 1 / phi]) for (const b of [-phi, phi]) hex.push(norm([0, a, b]), norm([a, b, 0]), norm([b, 0, a]));
+  const cells = [...pent.map((c) => ({ c, p: true })), ...hex.map((c) => ({ c, p: false }))];
+  return canvasTex(1024, 512, (g, W, H) => {
+    const img = g.createImageData(W, H);
+    for (let py = 0; py < H; py++) {
+      const lat = Math.PI * (0.5 - (py + 0.5) / H);
+      const cl = Math.cos(lat), sl = Math.sin(lat);
+      for (let px = 0; px < W; px++) {
+        const lon = ((px + 0.5) / W) * Math.PI * 2;
+        const x = cl * Math.cos(lon), y = sl, z = cl * Math.sin(lon);
+        let d1 = -2, d2 = -2, p1 = false;
+        for (const k of cells) {
+          const d = k.c[0] * x + k.c[1] * y + k.c[2] * z;
+          if (d > d1) { d2 = d1; d1 = d; p1 = k.p; } else if (d > d2) d2 = d;
         }
-        g.closePath();
-        g.fill();
-        g.stroke();
+        const edge = Math.acos(Math.min(1, d2)) - Math.acos(Math.min(1, d1)); // radians to the seam, about zero on it
+        const seam = Math.max(0, 1 - edge / 0.045); // a soft groove about 2.5 degrees wide
+        let r, gr, b;
+        if (p1) { r = 22; gr = 24; b = 28; } else { r = 246; gr = 246; b = 240; }
+        const shade = 1 - 0.1 * (1 - cl) - 0.03 * Math.sin(px * 0.9) * Math.sin(py * 0.9); // faint leather grain
+        const k = shade * (1 - 0.55 * seam * seam);
+        const i = (py * W + px) * 4;
+        img.data[i] = r * k; img.data[i + 1] = gr * k; img.data[i + 2] = b * k; img.data[i + 3] = 255;
       }
     }
+    g.putImageData(img, 0, 0);
   });
 }
 
@@ -77,8 +77,8 @@ export class BallRig {
   constructor() {
     this.group = new Group();
     this.ball = new Mesh(
-      new SphereGeometry(1, 28, 18),
-      new MeshStandardMaterial({ map: footballTexture(), roughness: 0.45, metalness: 0, emissive: '#e4e8ee', emissiveIntensity: 0.45 }),
+      new SphereGeometry(1, 64, 40),
+      new MeshStandardMaterial({ map: footballTexture(), roughness: 0.4, metalness: 0, emissive: '#e4e8ee', emissiveIntensity: 0.3 }),
     );
     this.glow = new Mesh(
       new PlaneGeometry(1, 1),
@@ -97,13 +97,41 @@ export class BallRig {
     this.age = 0; // seconds since the strike
   }
 
+  // After arrival: the ball flies on past the player and stays visible where it comes to rest. Ball only: no ring, no glow.
+  coast(local, dist, dt) {
+    this.group.visible = true;
+    this.group.position.copy(local);
+    this.ball.scale.setScalar(drawnRadius(dist));
+    this.glow.visible = false;
+    this.ring.visible = false;
+    if (dt > 0) {
+      this.spin += dt * 10;
+      this.ball.rotation.set(this.spin * 0.6, this.spin, 0);
+    }
+  }
+
   show(v) {
     this.group.visible = v;
+    this.glow.visible = true;
+    this.ring.visible = true;
+    this.glow.visible = true;
+    this.ring.visible = true;
     if (v) {
       this.age = 0;
       this.lock = 0;
       this.ring.material.color.copy(WHITE);
     }
+  }
+
+  // Before the strike the real football is already there, so the eyes start on the actual ball. Ball only: no ring, no glow.
+  rest(local, dist, dt) {
+    this.group.visible = true;
+    this.group.position.copy(local);
+    this.ball.scale.setScalar(drawnRadius(dist));
+    this.glow.visible = false;
+    this.ring.visible = false;
+    this.spin += dt * 2;
+    this.ball.rotation.set(0, this.spin, 0);
   }
 
   // locked: the player is on the ball right now (null = guide off, the ring stays white).
