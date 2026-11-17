@@ -4,3 +4,11 @@ videos/
 video/
 preview-audio/
 scratch/
+
+# Local backup copy of ON THE BALL (its own nested repo; canonical copy is vr-games/on-the-ball).
+on-the-ball/
+
+# Local run logs and one-off recording and scoring scripts at the repo root.
+debug.log
+record-*.mjs
+test-diverse-scoring.mjs
