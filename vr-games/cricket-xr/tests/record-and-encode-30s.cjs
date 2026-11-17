@@ -62,47 +62,27 @@ const BALLS = 6;
     // Head position: viewing crease and sightscreen
     await d.remote.dispatch('look_at', { device: 'headset', target: { x: 0, y: 1.05, z: -3.5 } });
 
-    // Open hand pose
-    for (const side of ['left', 'right']) {
-      d.hands[side].connected = true;
-      await d.remote.dispatch('set_hand_pose', { device: 'hand-' + side, poseId: 'open' });
-    }
+    // Fielder hands (src/emulator-hands.js, the same ones the emulator plays): relaxed cupped stance, a
+    // reach timed to the flight, fingers closing round the ball, both hands for a ball at the body.
+    for (const side of ['left', 'right']) d.hands[side].connected = true;
+    s.emulatorHands.forced = true;
+    window.__moveHands = () => s.emulatorHands.flush();
 
-    // Natural fielding ready stance (both hands in front of body at waist/chest)
-    const rest = {
-      left: { x: -0.22, y: 0.95, z: -0.42 },
-      right: { x: 0.22, y: 0.95, z: -0.42 },
-    };
-    const cur = {
-      left: { ...rest.left },
-      right: { ...rest.right },
-    };
-    window.__hands = { rest, cur, target: { left: { ...rest.left }, right: { ...rest.right } } };
-
-    window.__moveHands = () => {
-      for (const side of ['left', 'right']) {
-        const c = cur[side];
-        const t = window.__hands.target[side];
-        c.x += (t.x - c.x) * 0.45;
-        c.y += (t.y - c.y) * 0.45;
-        c.z += (t.z - c.z) * 0.45;
-        d.remote.dispatch('set_transform', { device: 'hand-' + side, position: { ...c }, anchor: 'grip' });
-      }
-    };
-
+    // The eyes: follow the ball in flight, watch it into the hands, then ease back to the coach.
+    const look = { x: 0, y: 1.05, z: -3.5 };
     window.__lookAtBall = (bIdx, plan) => {
       const b = s.ball.position;
       const flying = s.state === 'swinging' || s.state === 'flying';
       const curPlan = plan && plan[bIdx] ? plan[bIdx] : null;
-      if (flying) {
-        if (curPlan && curPlan.catch === false && b.z > -4) {
-          d.remote.dispatch('look_at', { device: 'headset', target: { x: b.x + 2, y: b.y + 0.8, z: b.z } });
-        } else {
-          d.remote.dispatch('look_at', { device: 'headset', target: { x: b.x, y: b.y, z: b.z } });
-        }
-      } else {
-        d.remote.dispatch('look_at', { device: 'headset', target: { x: 0, y: 1.05, z: -3.5 } });
-      }
+      let t;
+      if (flying && curPlan && curPlan.catch === false && b.z > -4) t = { x: b.x + 2, y: b.y + 0.8, z: b.z };
+      else if (flying || s.heldBy) t = { x: b.x, y: b.y, z: b.z };
+      else t = { x: 0, y: 1.05, z: -3.5 };
+      const k = flying ? 1 : 0.2;
+      look.x += (t.x - look.x) * k;
+      look.y += (t.y - look.y) * k;
+      look.z += (t.z - look.z) * k;
+      return d.remote.dispatch('look_at', { device: 'headset', target: { ...look } });
     };
 
     // Track audio events for exact synchronization
@@ -134,21 +114,22 @@ const BALLS = 6;
 
   // Target 720 frames (30.0s @ 24 FPS)
   const MAX_FRAMES = 720;
+  // `type` goes to the game's own forceType hook; the hands pick their technique from the ball's line.
   const ballPlan = [
-    { catch: true, high: false, hand: 'right' },  // Ball 1: Fast slip catch
-    { catch: false, high: false, hand: 'none' },   // Ball 2: Dropped catch (showing coach shrug)
-    { catch: true, high: true, hand: 'cup' },     // Ball 3: Lofted High Skier (High Catch!)
-    { catch: true, high: false, hand: 'left' },   // Ball 4: Fast swing catch on left hand
-    { catch: true, high: false, hand: 'right' },  // Ball 5: Clean right hand catch
-    { catch: true, high: false, hand: 'right' },  // Ball 6: Final winning catch
+    { catch: true, type: 'normal' },  // Ball 1: at the chest, both hands, orthodox cup
+    { catch: false, type: 'normal' }, // Ball 2: a late, dropped attempt (coach shrug)
+    { catch: true, type: 'high' },    // Ball 3: high skier, both hands, reverse cup
+    { catch: true, type: 'wide' },    // Ball 4: wide, one hand at full stretch, the other covers
+    { catch: true, type: 'normal' },  // Ball 5: both hands
+    { catch: true, type: 'normal' },  // Ball 6: both hands, the winning catch
   ];
 
   let frameNo = 0;
   const shot = async (bIdx = 0) => {
-    await page.evaluate(({ fn, bIdx, plan }) => {
+    await page.evaluate(async ({ fn, bIdx, plan }) => {
       window.__currentFrame = fn;
-      window.__moveHands();
-      window.__lookAtBall(bIdx, plan);
+      await window.__moveHands();
+      await window.__lookAtBall(bIdx, plan);
       return window.__frame();
     }, { fn: frameNo++, bIdx, plan: ballPlan });
     const filename = `f${String(frameNo - 1).padStart(4, '0')}.png`;
@@ -167,50 +148,24 @@ const BALLS = 6;
   });
 
   console.log('Recording active gameplay frames...');
+  let lastState = null;
   while (frameNo < MAX_FRAMES) {
     const state = await page.evaluate((plan) => {
       const s = window.__game.sys;
-      const h = window.__hands;
-      const bIdx = Math.max(0, s.ballNo - 1);
-      const curPlan = plan[bIdx] || { catch: true, high: false, hand: 'right' };
-
-      // Force high catch on Ball 3
-      if (s.ballNo === 3 && s.state === 'swinging') {
-        s.isHighCatch = true;
+      // The next ball's type, through the game's own test hook (read when the throw begins).
+      if (s.state === 'ready' || s.state === 'feedback' || s.state === 'idle') {
+        const next = plan[s.ballNo];
+        s.forceType = next ? next.type : 'normal';
+        s.forceWideSide = -1;
       }
+      const bIdx = Math.max(0, s.ballNo - 1);
+      const curPlan = plan[bIdx] || { catch: true, type: 'normal' };
 
-      // Step physics at 60Hz rate
+      // Step physics at 60Hz rate; the fielder hands move inside each step (a dropped attempt on ball 2).
+      s.emulatorHands.plan = curPlan;
       const simSteps = Math.round(60 / 24); // 2.5 simulation ticks per video frame
       for (let i = 0; i < simSteps; i++) {
         window.__real.call(s, 1 / 60);
-      }
-
-      const flying = s.state === 'swinging' || s.state === 'flying';
-      if (flying && curPlan.catch) {
-        if (curPlan.hand === 'cup') {
-          // Cup catch: bring both hands together to meet ball
-          h.target.left.x = s.aim.x - 0.08;
-          h.target.left.y = s.aim.y;
-          h.target.left.z = s.aim.z + 0.05;
-
-          h.target.right.x = s.aim.x + 0.08;
-          h.target.right.y = s.aim.y;
-          h.target.right.z = s.aim.z + 0.05;
-        } else if (curPlan.hand === 'left') {
-          h.target.left.x = s.aim.x;
-          h.target.left.y = s.aim.y;
-          h.target.left.z = s.aim.z + 0.05;
-          Object.assign(h.target.right, h.rest.right);
-        } else {
-          h.target.right.x = s.aim.x;
-          h.target.right.y = s.aim.y;
-          h.target.right.z = s.aim.z + 0.05;
-          Object.assign(h.target.left, h.rest.left);
-        }
-      } else {
-        // Return hands to ready fielding stance
-        Object.assign(h.target.left, h.rest.left);
-        Object.assign(h.target.right, h.rest.right);
       }
 
       return {
@@ -218,10 +173,18 @@ const BALLS = 6;
         ballNo: s.ballNo,
         score: s.score,
         misses: s.misses,
+        cup: s.cupType || (s.catchInfo && s.catchInfo.technique) || null,
+        two: s.twoHanded,
+        result: s.lastResult || null,
       };
     }, ballPlan);
 
     await shot(state.ballNo ? state.ballNo - 1 : 0);
+
+    if (state.state === 'feedback' && lastState !== 'feedback') {
+      console.log(` -> Ball ${state.ballNo}: ${state.result}${state.two ? ', two hands' : ''}${state.cup ? ` (${state.cup})` : ''}`);
+    }
+    lastState = state.state;
 
     if (frameNo % 100 === 0) {
       console.log(` -> Frame ${frameNo}/${MAX_FRAMES} (Ball ${state.ballNo}/${BALLS}, Score: ${state.score}, Missed: ${state.misses})`);
