@@ -1,0 +1,36 @@
+# ON THE BALL | VEGAH developer handoff
+**Baseline:** v0.1 | **Prepared:** November 15, 2026 (US Central)
+
+## Start here
+1. Read this brief and Original-Product-Vision.pptx. Read on-the-ball/README.md for the exact baseline limitations.
+2. Create a private company-owned GitHub repository `on-the-ball`; commit the contents of `on-the-ball/` as the initial application baseline. Keep this handoff and the original deck in a private docs folder or restricted company workspace. Tag the baseline `v0.1` before changes.
+3. In the application root run `node tests.mjs` (Node 18+), then `python -m http.server 8080` (Python 3). Open http://localhost:8080. For Windows use `py -m http.server 8080` if needed. Use localhost for desktop; use HTTPS for remote headset testing. Baseline tests were rerun: 14 passed, see Baseline-Test-Results.txt.
+4. Audit the source, create a feature branch, and use the accompanying AI-CODING-PROMPT.md if using an AI agent. Never upload company secrets or private code to unapproved services.
+5. Confirm competition eligibility, submission rules, Start membership, deadline and approved distribution path at https://start-developer-competition-26.devpost.com/ and official Meta developer documentation before committing to submission. Target November 18, 2026, 2 PM CST based on project planning; verify official deadline immediately.
+
+## Product intent
+Twenty virtual deliveries, seated, no controller or physical bat. Watch the ball, get a card. Four sports in vision: cricket, baseball, tennis, football. Cricket first. Preserve green/dark sports styling and clear scorecard. Focus is flagship; Predict and React provide meaningful hand-only play. Never call head tracking eye tracking. No medical or proven athletic improvement claims.
+
+## Baseline inventory and limitations
+- index.html / app.mjs: desktop Canvas game, simulated Focus (mouse/touch), Predict/React buttons, local history/export/delete.
+- engine.mjs: deterministic trajectory and scoring logic. Existing gameplay heuristics: 7-degree tolerance in XR, 75% valid duration required, green at >=80% alignment and early acquisition, amber at >=50%. These are not validated sensor or clinical standards.
+- xr.mjs: experimental direct WebXR + pinned Three.js CDN; headset Focus only; head mode and unverified runtime gaze mode; hand select events. No saved XR history, no production calibration or independently verified real gaze. Current sport geometry is simplified; headset scene shares a cricket-like environment.
+- tests.mjs: 14 unit checks; no end-to-end XR tests or real hardware results.
+- No IWSDK integration, cloud backend, verified leaderboard, AI model or actual anti-cheat attestation. Desktop browser code is mutable. Existing functionality must be verified, not assumed from this inventory.
+
+## P0 — release gates for competition
+**A. Runtime and inputs:** create official IWSDK starter (https://github.com/meta/immersive-web-sdk); use its documented setup and current supported versions, pin dependencies/lockfile. Confirm SDK/license and competition requirements. Port existing pure engine rather than rewriting it. Bundle dependencies locally. Implement explicit providers: desktop simulation, head pose, runtime gaze unverified, and eye gaze only after supported hardware/API validation. Record source, device/runtime, mode, timestamp semantics and tracking validity. Never silently substitute head pose or emulator for eyes. Test independent head/eye movement with real eye-capable hardware; if unavailable ship clearly labeled head mode and do not claim validated eyes. Verify hand input on device: selection, start, pause, retry, exit and result navigation. No controller required. If XR unavailable show clear compatibility message and desktop mode.
+**B. Gameplay:** one polished seated cricket environment, randomized 20-ball loop, warmup and adjustable speed, fixed world/camera, no forced camera movement. Keep virtual ball in comfortable viewing range and avoid collision with viewer. Score after each delivery and final ordered card; use symbols/text as well as color. Pause/exit always available; interrupted deliveries discarded, not scored as misses. Handle no tracking, permission denial/revocation, recenter, headset sleep, visibility changes and session end. Add calibration/quality checks; distinguish invalid from missed. Implement immersive Predict (occluded trajectory, hand selection) if feasible after Focus is robust. React, additional sports, cloud and club dashboard are not blockers for a reliable initial Focus submission unless official rules require otherwise.
+**C. Trust and testing:** use TEST-AND-ACCEPTANCE.md. Fix interval accounting: current engine can count an interval ending at a valid sample even if prior sample was invalid; require adjacent valid samples, explicit timestamps and bounded gaps. Distinguish sensor time vs frame time; never invent a sensor timestamp. Reject malformed/out-of-order data, guard finished state, validate duration/tolerance. Add fault injection and UI tests. Review async XR session startup/user activation (CDN import precedes requestSession), error cleanup and dependency loading. Real device performance and latency must be measured, not inferred from simulation. Avoid aggressive head movement during fast deliveries; choose safe configurable duration.
+**D. Delivery:** deploy HTTPS staging using existing approved VEGAH cloud resources. No new paid service without approval. Provide reproducible build, lockfile, test output, device matrix, known issues, working URL and demo video. Keep demo honest: label simulation and real hardware, not an eye-tracking claim if unverified. Review official submission requirements and submit via authorized representative only.
+
+## Proposed schedule (US Central; adjust to actual deadline)
+- Nov 16: baseline run, eligibility check, SDK/provider spike, first playable immersive cricket/hand loop; report hardware access and blockers.
+- Nov 17: finish P0, test real Quest if available, stage HTTPS, record actual demo, freeze candidate.
+- Nov 18 morning: final smoke test and evidence review; target submission well before 2 PM CST, subject to confirmed official rules. If eligibility or eye hardware unavailable, disclose; do not fake evidence. A head-only submission is contingent on official rules.
+
+## After competition
+P1: immersive Predict/React, improved sport-specific physics/visuals/audio, local XR history, adaptive difficulty, accessibility refinements. P2: opt-in coach and club dashboard, cloud sync, server-issued challenges/replay protection/rate limits, Android XR validation. No prize-bearing leaderboard using local telemetry alone. Keep raw eye data ephemeral; only aggregate results with consent, deletion/export and access controls. No inference of health or cognition. Use rule-based coaching before introducing paid AI.
+
+## Reporting and ownership
+Post a daily written update: commit/PR, build URL, tests passed/failed, device/runtime, screenshots/video, blockers, next steps. Assign development owner and independent reviewer; use PRs and protected main, no secrets, no personal repos, no unauthorized paid services. Do not claim production-ready until acceptance evidence is reviewed.

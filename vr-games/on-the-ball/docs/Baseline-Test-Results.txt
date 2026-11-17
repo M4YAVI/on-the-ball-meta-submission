@@ -1,0 +1,15 @@
+PASS aligned
+PASS late acquisition
+PASS miss
+PASS missing gaze
+PASS head substitution
+PASS NaN injection
+PASS replayed timestamps
+PASS large gaps
+PASS short dropout tolerated
+PASS invalid vector
+PASS orthogonal vectors
+PASS trajectory endpoints
+PASS invalid answer
+PASS finished trial immutable
+14 tests passed
