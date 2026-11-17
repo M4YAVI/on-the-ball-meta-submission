@@ -13,7 +13,7 @@ const MAX_SESSIONS = 50;
 const SOURCES = ['eye', 'head', 'simulated'];
 // release speed of each delivery (ids from SPEED_OPTIONS in ball-path.js; calm / normal / pro are from earlier builds and stay
 // readable). Scores at different speeds are not comparable.
-export const SPEEDS = ['gentle', 'spin', 'easy', 'medium', 'fast', 'calm', 'normal', 'pro']; // 'easy' is football's 70 km/h
+export const SPEEDS = ['gentle', 'spin', 'easy', 'slow', 'medium', 'fast', 'calm', 'normal', 'pro']; // 'easy' is football's 70 km/h, 'slow' is tennis's 100 km/h
 const STATUSES = Object.values(STATUS);
 
 function validSession(s) {

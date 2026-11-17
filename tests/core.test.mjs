@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { Trial, angle, tally, STATUS, SAMPLE, TOLERANCE, toleranceFor } from '../src/core/engine.js';
 import { GazeVerdict, VERDICT, CalibrationCheck, CAL } from '../src/core/gaze-verdict.js';
 import { ballPosition, bounceT, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, flight, flightMs, FIELD, FOV, PATH, PHYS, SPEED_OPTIONS } from '../src/core/ball-path.js';
-import { GameFlow, PHASE, MODE } from '../src/core/flow.js';
+import { GameFlow, PHASE, MODE, SPORTS } from '../src/core/flow.js';
 import { HistoryStore, HISTORY_KEY } from '../src/core/history.js';
 
 // A flight of `ms` with a sample every 20 ms; fn(trial, t) decides each sample.
@@ -378,9 +378,9 @@ function ready(mode = MODE.HEAD) {
 }
 const green = { status: STATUS.GREEN, quality: 1, coverage: 1 };
 
-test('only cricket can be selected in this build', () => {
+test('only the live sports can be selected (all four are live; an unknown sport is refused)', () => {
   const f = new GameFlow();
-  assert.equal(f.selectSport('tennis'), false);
+  assert.deepEqual(SPORTS.filter((s) => !s.live), []);
   assert.equal(f.selectSport('nonsense'), false);
   assert.equal(f.phase, PHASE.SPORT);
   assert.equal(f.selectSport('cricket'), true);

@@ -21,11 +21,11 @@ export const PHASE = Object.freeze({
   SCORECARD: 'scorecard',
 });
 
-// Cricket and football are playable. The others are shown, honestly, as coming later.
+// Cricket, football, tennis and baseball are playable.
 export const SPORTS = Object.freeze([
   { id: 'cricket', label: 'Cricket', live: true },
-  { id: 'baseball', label: 'Baseball', live: false },
-  { id: 'tennis', label: 'Tennis', live: false },
+  { id: 'baseball', label: 'Baseball', live: true },
+  { id: 'tennis', label: 'Tennis', live: true },
   { id: 'football', label: 'Football', live: true },
 ]);
 
