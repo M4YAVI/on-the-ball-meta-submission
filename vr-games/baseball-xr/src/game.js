@@ -872,7 +872,7 @@ export class GameSystem extends createSystem({}) {
         if (this.target && this.target.material) this.target.material.opacity = 0.75;
       }
     }
-    this.focus.sample(this.player, this.world.camera, inHeadset);
+    this.focus.sample(this.player, this.world.camera, inHeadset, dt);
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swapLockout > 0) this.swapLockout -= dt;

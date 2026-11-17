@@ -8,7 +8,7 @@ import {
   breakAccel, callOffset, callWords, choosePitch, clampToReach, commandMiss, drawnRps, flutterAt, flutterParams,
   FRAME, INCH, LEVELS, levelById, MPH, PITCHES, pitchSpeed, REACH, SPEED, spinAxis, STRIKE_ZONE, umpire,
 } from '../src/pitches.js';
-import { FocusTracker } from '../src/gaze.js';
+import { CAL, CalibrationCheck, FocusTracker, VERDICT } from '../src/gaze.js';
 import { EyeRingTracker, projectGazePoint } from '../src/eye-tracker.js';
 import { inTargetSquare } from '../src/game.js';
 
@@ -594,4 +594,249 @@ test('pitch target vs gaze reticle: distinct crosshairs and separate visual iden
   assert.equal(targetTicksCount, 4, 'target ring has crosshair tick tabs for aiming');
   assert.equal(eyeHasTicks, false, 'gaze reticle is a smooth circle without crosshair ticks');
   assert.equal(targetDepth, -0.55, 'target ring is stationary in world space on strike zone plane');
+});
+
+// ---------- eye tracking: genuine eyes, head-locked rays, blinks, dropouts, smoothing, calibration ----------
+// Reference behaviour: ON THE BALL src/core/gaze-verdict.js. Head and eye poses are built separately per frame.
+
+const G_DT = 1 / 72;
+const G_DEG = Math.PI / 180;
+const G_FWD = new Vector3(0, 0, -1);
+const G_HEAD = new Vector3(0, 1.2, 0);
+const G_BALL = new Vector3(0, 1.2, -10);
+const gYaw = (deg) => new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), deg * G_DEG);
+const gToward = (dir) => new Quaternion().setFromUnitVectors(G_FWD, dir.clone().normalize());
+const gAngle = (a, b) => a.angleTo(b) / G_DEG;
+const gNoise = (seed) => {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296 - 0.5;
+  };
+};
+
+// A player rig for one frame: head orientation, and an eye world rotation (null = no eye data this frame).
+function gRig(headQ, eyeQ) {
+  const head = new Object3D();
+  head.position.copy(G_HEAD);
+  head.quaternion.copy(headQ);
+  head.updateMatrixWorld(true);
+  let eyeSpace = null;
+  if (eyeQ) {
+    eyeSpace = new Object3D();
+    eyeSpace.position.copy(G_HEAD);
+    eyeSpace.quaternion.copy(eyeQ);
+    eyeSpace.updateMatrixWorld(true);
+  }
+  return { head, eyeSpace, gazeOrigin: eyeQ ? 'tracked' : 'none' };
+}
+// One headset frame, then (optionally) the ball is tracked.
+function gFrame(f, headQ, eyeQ, ball = G_BALL, track = true) {
+  f.sample(gRig(headQ, eyeQ), camera, true, G_DT);
+  if (track) f.track(ball, G_DT, 10);
+}
+// Feeds independent eye data: with the head still, the eyes look a little off the head line, then at the ball.
+function gPrime(f) {
+  const toBall = gToward(G_BALL.clone().sub(G_HEAD));
+  for (let i = 0; i < 10; i++) gFrame(f, gYaw(0), i % 2 ? toBall : gYaw(6), G_BALL, false);
+  for (let i = 0; i < 20; i++) gFrame(f, gYaw(0), toBall, G_BALL, false);
+}
+function gConfirm(f) {
+  gPrime(f);
+  assert.equal(f.realEyes, true);
+}
+
+test('eye tracking: a blink is bridged, a long dropout is marked lost and never becomes head tracking', () => {
+  const f = new FocusTracker();
+  const toBall = gToward(G_BALL.clone().sub(G_HEAD));
+  gConfirm(f);
+  f.resetPitch();
+  for (let i = 0; i < 20; i++) gFrame(f, gYaw(0), toBall);
+  for (let i = 0; i < 7; i++) gFrame(f, gYaw(0), null); // ~100 ms blink
+  assert.equal(f.mode, 'eyes');
+  assert.equal(f.holding, true);
+  assert.equal(f.watching, true, 'a blink does not look like looking away');
+  for (let i = 0; i < 144; i++) gFrame(f, gYaw(0), null); // 2 s dropout, head still pointing at the ball
+  assert.equal(f.mode, 'eyes', 'still eye mode: not silently switched to head');
+  assert.equal(f.source, 'eyes-lost');
+  assert.equal(f.valid, false);
+  assert.ok(f.invalidTime > 1.5, 'lost time is recorded, not scored');
+  assert.equal(f.focus, null, 'a flight that is mostly missing eye data gets no made-up score');
+  for (let i = 0; i < 10; i++) gFrame(f, gYaw(0), toBall);
+  assert.equal(f.source, 'eyes', 'eye data back: eye tracking resumes');
+});
+
+test('eye tracking: a head ray that lags the head pose while the head turns fast is never taken for eyes', () => {
+  const f = new FocusTracker();
+  let prev = gYaw(0);
+  for (let i = 0; i < 300; i++) {
+    const q = gYaw(Math.sin(i / 8) * 40);
+    gFrame(f, q, prev, G_BALL, false); // the "gaze" is last frame's head pose (timing skew)
+    prev = q;
+  }
+  assert.equal(f.eyeSeen, false);
+  assert.equal(f.mode, 'head');
+  assert.equal(f.realEyes, false);
+});
+
+test('eye tracking: small sensor noise on a head ray cannot add up to a false "eyes"', () => {
+  const n = gNoise(5);
+  const f = new FocusTracker();
+  for (let i = 0; i < 3000; i++) {
+    const d = G_FWD.clone().add(new Vector3(n() * 0.01, n() * 0.01, 0)); // about +/-0.3 deg
+    gFrame(f, gYaw(0), gToward(d), G_BALL, false);
+  }
+  assert.equal(f.eyeSeen, false);
+  assert.equal(f.mode, 'head');
+});
+
+test('eye tracking: verdicts for head-locked, no-gaze and independent eye data', () => {
+  const locked = new FocusTracker();
+  for (let i = 0; i < 240; i++) {
+    const q = gYaw(Math.sin(i / 30) * 10);
+    gFrame(locked, q, q, G_BALL, false);
+  }
+  assert.equal(locked.verdict, VERDICT.HEAD_LOCKED);
+  assert.equal(locked.mode, 'head');
+  const none = new FocusTracker();
+  for (let i = 0; i < 100; i++) gFrame(none, gYaw(0), null, G_BALL, false);
+  assert.equal(none.verdict, VERDICT.NO_GAZE);
+  assert.equal(none.mode, 'head');
+  const eyes = new FocusTracker();
+  gConfirm(eyes);
+  assert.equal(eyes.verdict, VERDICT.EYE);
+});
+
+test('eye tracking: in the emulator a tracked gaze ray is labelled simulated and keeps the 7 degree eye cone', () => {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const before = globalThis.window;
+  globalThis.window = { IWER_DEVICE: {} };
+  try {
+    const f = new FocusTracker();
+    gPrime(f);
+    assert.equal(f.mode, 'eyes');
+    assert.equal(f.simulated, true);
+    assert.equal(f.realEyes, false);
+    assert.equal(f.source, 'simulated-eyes');
+    // 10 degrees off the ball: outside the 7 degree eye cone (the 18 degree cone is only for the mouse).
+    f.resetPitch();
+    for (let i = 0; i < 30; i++) gFrame(f, gYaw(0), gYaw(10));
+    assert.equal(f.watching, false);
+    for (let i = 0; i < 30; i++) gFrame(f, gYaw(0), null);
+    assert.equal(f.simulated, true, 'the label survives a dropout');
+    assert.equal(f.realEyes, false);
+  } finally {
+    if (had) globalThis.window = before;
+    else delete globalThis.window;
+  }
+});
+
+test('eye tracking: jitter while fixating is smoothed, and a one-frame 90 degree glitch is ignored', () => {
+  const n = gNoise(7);
+  const f = new FocusTracker();
+  const toBallDir = G_BALL.clone().sub(G_HEAD).normalize();
+  gConfirm(f);
+  let rawSq = 0;
+  let outSq = 0;
+  let k = 0;
+  for (let i = 0; i < 300; i++) {
+    const j = toBallDir.clone().add(new Vector3(n() * 0.03, n() * 0.03, 0)).normalize(); // ~ +/-0.9 deg
+    gFrame(f, gYaw(0), gToward(j));
+    if (i > 30) {
+      rawSq += gAngle(j, toBallDir) ** 2;
+      outSq += gAngle(f.dir, toBallDir) ** 2;
+      k++;
+    }
+  }
+  assert.ok(Math.sqrt(outSq / k) < Math.sqrt(rawSq / k) * 0.6, 'jitter is reduced');
+  assert.equal(f.watching, true);
+  const before = f.dir.clone();
+  gFrame(f, gYaw(0), gToward(new Vector3(1, 0, 0)));
+  assert.ok(gAngle(f.dir, before) < 3, 'the spike did not move the gaze');
+  assert.equal(f.watching, true);
+});
+
+test('eye tracking: a saccade still arrives within a few frames (smoothing does not lag real eye moves)', () => {
+  const f = new FocusTracker();
+  gConfirm(f);
+  for (let i = 0; i < 30; i++) gFrame(f, gYaw(0), gYaw(0), G_BALL, false);
+  const target = G_FWD.clone().applyQuaternion(gYaw(15));
+  let frames = 0;
+  for (; frames < 30; frames++) {
+    gFrame(f, gYaw(0), gToward(G_FWD.clone().lerp(target, Math.min(1, (frames + 1) / 4))), G_BALL, false);
+    if (gAngle(f.dir, target) < 2) break;
+  }
+  assert.ok(frames <= 9, `settled in ${frames + 1} frames`);
+});
+
+test('eye tracking: real eyes get a short look-away grace; head direction keeps its instant response', () => {
+  const toBall = gToward(G_BALL.clone().sub(G_HEAD));
+  const away = gYaw(40);
+  const e = new FocusTracker();
+  gConfirm(e);
+  e.resetPitch();
+  for (let i = 0; i < 20; i++) gFrame(e, gYaw(0), toBall);
+  gFrame(e, gYaw(0), away);
+  assert.equal(e.watching, true, 'one noisy frame off the ball is not a look-away');
+  for (let i = 0; i < 20; i++) gFrame(e, gYaw(0), away);
+  assert.equal(e.watching, false, 'a real look-away is still detected');
+  const h = new FocusTracker();
+  h.resetPitch();
+  for (let i = 0; i < 20; i++) gFrame(h, gYaw(0), null);
+  assert.equal(h.watching, true);
+  gFrame(h, away, null);
+  assert.equal(h.watching, false, 'head mode: unchanged, immediate');
+});
+
+test('eye tracking: NaN head or eye poses never poison the gaze or the score', () => {
+  const f = new FocusTracker();
+  gConfirm(f);
+  f.resetPitch();
+  for (const bad of [new Quaternion(NaN, 0, 0, 1), new Quaternion(Infinity, 0, 0, 1), new Quaternion(0, 0, 0, 0)]) {
+    gFrame(f, gYaw(0), bad);
+    assert.ok(Number.isFinite(f.dir.x) && Number.isFinite(f.dir.y) && Number.isFinite(f.dir.z));
+  }
+  const flight = f.flightTime;
+  f.sample(gRig(new Quaternion(NaN, NaN, NaN, NaN), null), camera, true, G_DT);
+  assert.equal(f.valid, false);
+  f.track(G_BALL, G_DT, 10);
+  assert.equal(f.flightTime, flight, 'a broken head pose is not scored');
+  f.track(new Vector3(NaN, 0, 0), G_DT, 10);
+  assert.equal(f.flightTime, flight, 'a NaN ball position is ignored');
+});
+
+const gCalTargets = () => [
+  { id: 'left', dir: G_FWD.clone().applyQuaternion(gYaw(15)) },
+  { id: 'right', dir: G_FWD.clone().applyQuaternion(gYaw(-15)) },
+];
+
+test('calibration: head still and eyes on each dot passes; a gaze that follows the head fails', () => {
+  const ok = new CalibrationCheck({ targets: gCalTargets() });
+  ok.start(0, G_FWD.clone());
+  let snap;
+  let ms = 0;
+  for (const tg of ok.targets) for (let i = 0; i < 40; i++) snap = ok.sample((ms += 1000 / 72), tg.dir, G_FWD, true);
+  assert.equal(snap.status, CAL.PASSED);
+  const follows = new CalibrationCheck({ targets: gCalTargets(), timeoutMs: 1000, headDriftDeg: 30 });
+  follows.start(0, G_FWD.clone());
+  for (let t = 0; t <= 1100; t += 1000 / 72) snap = follows.sample(t, follows.targets[0].dir, follows.targets[0].dir, true);
+  assert.equal(snap.status, CAL.FAILED);
+  assert.equal(snap.reason, 'gaze-follows-head');
+});
+
+test('calibration: head turning fails as head-moved; no gaze fails as no-gaze; NaN never passes', () => {
+  let snap;
+  const moved = new CalibrationCheck({ targets: gCalTargets(), timeoutMs: 1000 });
+  moved.start(0, G_FWD.clone());
+  const halfway = G_FWD.clone().applyQuaternion(gYaw(8));
+  for (let t = 0; t <= 1100; t += 1000 / 72) snap = moved.sample(t, moved.targets[0].dir, halfway, true);
+  assert.equal(snap.reason, 'head-moved');
+  const none = new CalibrationCheck({ targets: gCalTargets(), timeoutMs: 1000 });
+  none.start(0, G_FWD.clone());
+  for (let t = 0; t <= 1100; t += 1000 / 72) snap = none.sample(t, null, G_FWD, false);
+  assert.equal(snap.reason, 'no-gaze');
+  const nan = new CalibrationCheck({ targets: gCalTargets(), timeoutMs: 500 });
+  nan.start(0, G_FWD.clone());
+  for (let t = 0; t <= 600; t += 1000 / 72) snap = nan.sample(t, new Vector3(NaN, 0, -1), G_FWD, true);
+  assert.equal(snap.status, CAL.FAILED);
 });
