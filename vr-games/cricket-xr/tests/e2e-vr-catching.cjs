@@ -76,7 +76,16 @@ const record = (name, pass, detail = '') => {
         'index-finger-tip': h.tips.index.clone(),
         'pinky-finger-tip': h.tips.pinky.clone(),
         'thumb-tip': h.tips.thumb.clone(),
+        // The game reads every finger bone (the ring finger, and each finger's middle and distal joints),
+        // so the harness has to place those too: left alone they would come from the emulator's own hand.
+        'ring-finger-phalanx-proximal': h.knuckles.ring.clone(),
+        'ring-finger-tip': h.tips.ring.clone(),
+        'thumb-phalanx-distal': h.dists.thumb.clone(),
       };
+      for (const f of ['index', 'middle', 'ring', 'pinky']) {
+        map[`${f}-finger-phalanx-intermediate`] = h.mids[f].clone();
+        map[`${f}-finger-phalanx-distal`] = h.dists[f].clone();
+      }
       return map;
     }
     function patchJoints() {

@@ -162,6 +162,10 @@ export class GameSystem extends createSystem({}) {
       wrist: new Vector3(), middleProx: new Vector3(), indexMeta: new Vector3(), pinkyMeta: new Vector3(),
       indexProx: new Vector3(), pinkyProx: new Vector3(), thumbProx: new Vector3(),
       middleTip: new Vector3(), indexTip: new Vector3(), pinkyTip: new Vector3(), thumbTip: new Vector3(),
+      // The rest of each finger: its middle and distal joints, and the whole ring finger.
+      ringProx: new Vector3(), ringTip: new Vector3(), thumbDist: new Vector3(),
+      indexMid: new Vector3(), indexDist: new Vector3(), middleMid: new Vector3(), middleDist: new Vector3(),
+      ringMid: new Vector3(), ringDist: new Vector3(), pinkyMid: new Vector3(), pinkyDist: new Vector3(),
     };
     this.shoulders = { left: new Vector3(), right: new Vector3(), axis: new Vector3(1, 0, 0) };
     this.headQ = new Quaternion();
@@ -759,7 +763,20 @@ export class GameSystem extends createSystem({}) {
             indexTip: opt('index-finger-tip', J.indexTip),
             pinkyTip: opt('pinky-finger-tip', J.pinkyTip),
             thumbTip: opt('thumb-tip', J.thumbTip),
+            ringProx: opt('ring-finger-phalanx-proximal', J.ringProx),
+            ringTip: opt('ring-finger-tip', J.ringTip),
+            thumbDist: opt('thumb-phalanx-distal', J.thumbDist),
           };
+          // Each finger's middle and distal joints: the real bend of the finger. A finger the hand does
+          // not report all of is read as straight.
+          for (const f of ['index', 'middle', 'ring', 'pinky']) {
+            const mid = opt(`${f}-finger-phalanx-intermediate`, J[`${f}Mid`]);
+            const dist = opt(`${f}-finger-phalanx-distal`, J[`${f}Dist`]);
+            if (mid && dist) {
+              full[`${f}Mid`] = mid;
+              full[`${f}Dist`] = dist;
+            }
+          }
           ok = setHandFromJoints(h, full);
         }
         if (!ok) {

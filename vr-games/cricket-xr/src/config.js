@@ -30,7 +30,7 @@ export const CFG = {
   wristCutoff: 0, // a ball centre this close to the wrist (along the hand), or behind it, hit the wrist/forearm
   backSide: 0.07, // ball centre more than this behind the palm plane = back of the hand
   facingPalm: 0.2, // palm contact: ball must be moving into the palm (cosine of angle to the palm normal)
-  facingFinger: -0.1, // finger/thumb contact must be more square on than that
+  facingFinger: 0, // finger/thumb contact must be more square on than that
   fistOpenness: 0.08, // below this (fingertips within ~5 cm of the palm) the hand is a clenched fist: knuckles cannot catch
   deflectRestitution: 0.35, // bounce off the back of a hand
   stretchReach: 0.45, // a palm this far out sideways from its own shoulder (or across the body) is a stretching catch
