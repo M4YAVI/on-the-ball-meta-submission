@@ -204,3 +204,62 @@ export function cryptoRng() {
     return buf[0] / 4294967296;
   };
 }
+
+// After the ball reaches its arrival point it does not vanish: it carries on past the player, lands behind them, bounces, rolls
+// and comes to rest, and stays there until the next shot. posAt(u) is the game's own ballPosition for this delivery.
+// The ball keeps its arrival velocity and is steered so it passes at least `passClearM` to the side of the head (never through
+// the face). Scoring is finished at arrival and does not read any of this.
+const ROLL = Object.freeze({ g: 9.81, wallZ: 2.6, wallX: 3.4, groundY: -1.2, restitution: 0.42, rollFriction: 1.6, radius: 0.05 });
+
+export function startRoll(posAt, durMs, passClearM = 0.5) {
+  const eps = 0.02;
+  const p1 = posAt(1);
+  const p0 = posAt(1 - eps);
+  const T = (eps * durMs) / 1000;
+  let vx = (p1[0] - p0[0]) / T;
+  const vy = (p1[1] - p0[1]) / T;
+  const vz = Math.max((p1[2] - p0[2]) / T, 4);
+  const tz = Math.max(1e-3, -p1[2] / vz);
+  const xPass = p1[0] + vx * tz;
+  if (Math.abs(xPass) < passClearM) {
+    const side = xPass !== 0 ? Math.sign(xPass) : p1[0] !== 0 ? Math.sign(p1[0]) : 1;
+    vx = (side * passClearM - p1[0]) / tz;
+  }
+  return { p: [p1[0], p1[1], p1[2]], v: [vx, vy, vz], rest: false };
+}
+
+// Advance the ball by dt seconds (sub-stepped). Returns the state; state.rest is true once it has stopped.
+export function stepRoll(st, dt) {
+  if (st.rest) return st;
+  const n = Math.max(1, Math.ceil(dt / 0.008));
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    st.v[1] -= ROLL.g * h;
+    st.p[0] += st.v[0] * h;
+    st.p[1] += st.v[1] * h;
+    st.p[2] += st.v[2] * h;
+    if (st.p[2] > ROLL.wallZ) { // the net / back wall: the ball drops
+      st.p[2] = ROLL.wallZ;
+      st.v[2] = 0; // dead in the net
+      st.v[0] *= 0.3;
+    }
+    if (Math.abs(st.p[0]) > ROLL.wallX) { // side netting / boards
+      st.p[0] = Math.sign(st.p[0]) * ROLL.wallX;
+      st.v[0] = 0;
+    }
+    const floor = ROLL.groundY + ROLL.radius;
+    if (st.p[1] <= floor) {
+      st.p[1] = floor;
+      st.v[1] = Math.abs(st.v[1]) > 0.8 ? -st.v[1] * ROLL.restitution : 0;
+      const f = Math.exp(-ROLL.rollFriction * h);
+      st.v[0] *= f;
+      st.v[2] *= f;
+      if (st.v[1] === 0 && Math.hypot(st.v[0], st.v[2]) < 0.05) {
+        st.v[0] = st.v[1] = st.v[2] = 0;
+        st.rest = true;
+        break;
+      }
+    }
+  }
+  return st;
+}

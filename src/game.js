@@ -8,6 +8,7 @@
 //   - A sensor failure gives UNSCORED, never red.
 //   - Only totals are kept. No gaze or head poses are stored.
 
+import { startRoll, stepRoll } from './core/ball-path.js';
 import { createSystem, Group, Mesh, MeshBasicMaterial, Pressed, Quaternion, RayInteractable, RingGeometry, SphereGeometry, Vector3, VisibilityState } from '@iwsdk/core';
 import { angle, STATUS, TOLERANCE as BASE_TOLERANCE, toleranceFor, Trial } from './core/engine.js';
 import { CAL, CalibrationCheck, GazeVerdict, VERDICT } from './core/gaze-verdict.js';
@@ -118,6 +119,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.ui = new Ui(this.world, this.anchorEntity, (id) => this.onPress(id));
     this.anchor2D();
     this.toStart();
+    this.sharpenXR();
     this.prewarm();
 
     this.queries.pressed.subscribe('qualify', (entity) => this.ui.press(entity));
@@ -163,6 +165,18 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         const model = v[kind]?.[side]?.visual?.model;
         if (model && model.visible) model.visible = false;
       }
+    }
+  }
+
+  // Sharper picture in the headset: a bigger render target than the default and no foveated (blurred) edges. Must be set
+  // before the VR session starts, so it is done here at load. An optimisation only: the game works without it.
+  sharpenXR() {
+    try {
+      const xr = this.world.renderer?.xr;
+      xr?.setFramebufferScaleFactor?.(1.3);
+      xr?.setFoveation?.(0);
+    } catch (_) {
+      /* keep the defaults */
     }
   }
 
@@ -460,7 +474,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       case 'btn:exit':
       case 'btn:exit2':
         this.cur = null;
-        this.ball.show(false);
+        this.roll = null;
+    this.ball.show(false);
         this.flash = null;
         this.finishedTs = null;
         this.nextAt = null;
@@ -596,15 +611,24 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (f.phase !== PHASE.PLAYING && f.phase !== PHASE.BETWEEN) return;
     this.cur = null;
     this.nextAt = null;
+    this.roll = null;
     this.ball.show(false);
     this.readyDot.visible = false;
     this.scene3d.setDelivery(null);
     if (f.interrupt()) this.showPhase();
   }
 
+  placeRoll(r, dt) {
+    this.local.set(r.p[0], r.p[1], r.p[2]);
+    this.world3.copy(this.local);
+    this.anchor.localToWorld(this.world3);
+    this.ball.coast(this.local, this.world3.distanceTo(this.o), r.rest ? 0 : dt);
+  }
+
   stepPlay(dt, time) {
     const c = this.cur;
     if (!c) return;
+    this.roll = null;
     const f = this.flow;
     // Once the ball is away, its clock moves at most MAX_FLIGHT_STEP per frame. A frame hitch (a busy PC running the
     // emulator, a GC pause) then holds the ball still for that frame instead of jumping it ahead, so the gaze is always
@@ -628,7 +652,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.scene3d.setDelivery(c.flight); // seconds since release: the follow-through after the ball has gone
     const ms = c.flight * 1000;
     if (ms >= c.dur) {
-      this.finishBall(time);
+      // Past the arrival point the ball keeps flying past the player, lands behind them and stays there. Scoring ended at arrival.
+      c.roll ??= startRoll((u) => ballPosition(u, c.delivery.lane, c.delivery.curve, c.delivery.length, c.kmh), c.dur);
+      stepRoll(c.roll, dt);
+      this.placeRoll(c.roll, dt);
+      if (c.roll.p[2] >= 1.0 || c.roll.rest) this.finishBall(time);
       return;
     }
     const t01 = ms / c.dur;
@@ -756,7 +784,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const f = this.flow;
     const summary = c.trial.finish();
     this.cur = null;
-    this.ball.show(false);
+    this.roll = c.roll ?? null; // the ball is not removed: it keeps rolling behind the player and stays at rest
     const entry = f.completeBall(summary, Date.now());
     if (!entry) return;
     if (import.meta.env.DEV) {
@@ -770,7 +798,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       else if (summary.status !== STATUS.UNSCORED) this.streak = 0;
       this.bestStreak = Math.max(this.bestStreak, this.streak);
     }
-    this.flash = { status: summary.status, reason: summary.reason, quality: summary.quality, streak: entry.warmup ? 0 : this.streak, until: time + GAP - 0.3 };
+    this.flash = { status: summary.status, reason: summary.reason, quality: summary.quality, coverage: summary.coverage, streak: entry.warmup ? 0 : this.streak, until: time + GAP - 0.3 };
     if (summary.status === STATUS.GREEN) this.sfx.play('good', this.streak >= 3 ? 0.55 : 0.4);
     if (f.phase === PHASE.SCORECARD) {
       this.finishSession();
@@ -835,6 +863,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         this.stepPlay(dt, time);
         break;
       case PHASE.BETWEEN:
+        if (this.roll) {
+          stepRoll(this.roll, dt);
+          this.placeRoll(this.roll, dt);
+        }
         if (this.nextAt !== null && time >= this.nextAt) this.beginBall();
         break;
       default:

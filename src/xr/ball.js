@@ -19,11 +19,13 @@ function canvasTex(w, h, draw) {
   draw(c.getContext('2d'), w, h);
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
+  t.anisotropy = 8;
   return t;
 }
 
 function leather() {
-  return canvasTex(512, 256, (x) => {
+  return canvasTex(1024, 512, (x) => {
+    x.scale(2, 2);
     const g = x.createLinearGradient(0, 0, 0, 256);
     g.addColorStop(0, '#d0242a');
     g.addColorStop(1, '#9c1519');
@@ -58,7 +60,7 @@ export class BallRig {
   constructor() {
     this.group = new Group();
     this.ball = new Mesh(
-      new SphereGeometry(1, 28, 18),
+      new SphereGeometry(1, 64, 40),
       new MeshStandardMaterial({ map: leather(), roughness: 0.4, metalness: 0, emissive: '#e0262c', emissiveIntensity: 0.6 }),
     );
     this.glow = new Mesh(
@@ -78,8 +80,23 @@ export class BallRig {
     this.age = 0; // seconds since release
   }
 
+  // After arrival: the ball flies on past the player and stays visible where it comes to rest. Ball only: no ring, no glow.
+  coast(local, dist, dt) {
+    this.group.visible = true;
+    this.group.position.copy(local);
+    this.ball.scale.setScalar(drawnRadius(dist));
+    this.glow.visible = false;
+    this.ring.visible = false;
+    if (dt > 0) {
+      this.spin += dt * 10;
+      this.ball.rotation.set(this.spin * 0.6, this.spin, 0);
+    }
+  }
+
   show(v) {
     this.group.visible = v;
+    this.glow.visible = true;
+    this.ring.visible = true;
     if (v) {
       this.age = 0;
       this.lock = 0;
