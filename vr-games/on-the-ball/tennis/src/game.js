@@ -683,7 +683,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       c.released = true;
       this.readyDot.visible = false;
       this.ball.show(true);
-      this.sfx.play('ui', 0.3); // the strike: the ball is away
+      const toss = this.scene3d.tossPos || ballPosition(0, c.delivery.lane, c.delivery.curve, c.delivery.depth, c.kmh, c.side);
+      this.local.set(toss[0], toss[1], toss[2]);
+      this.world3.copy(this.local);
+      this.anchor.localToWorld(this.world3);
+      this.sfx.play('racket', 0.55, { kmh: c.kmh, pos: this.world3 });
     }
     this.scene3d.setDelivery(lead); // seconds since the strike: the follow-through after the ball has gone
     const ms = lead * 1000;
@@ -699,7 +703,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const p = ballPosition(t01, c.delivery.lane, c.delivery.curve, c.delivery.depth, c.kmh, c.side);
     if (!c.bounced && t01 >= bounceT(c.delivery.depth, c.kmh)) {
       c.bounced = true; // exactly once: the ball touches the court
-      this.sfx.play('bounce', 0.35);
+      this.local.set(p[0], p[1], p[2]);
+      this.world3.copy(this.local);
+      this.anchor.localToWorld(this.world3);
+      this.sfx.play('bounce', 0.35, { kmh: c.kmh, pos: this.world3 });
     }
     this.local.set(p[0], p[1], p[2]);
     this.world3.copy(this.local);
@@ -884,6 +891,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (this.needAnchor && inXR) this.tryAnchor();
     if (inXR) this.hideInputModels();
     this.rays.noteGaze(time);
+    if (this.world?.camera) this.sfx.updateListener(this.world.camera);
     this.scene3d.update(dt);
     // the ball is in the server's hand and then tossed from the start of the build-up until it is struck, and is never left behind
     this.scene3d.setBallAtRest(this.flow.phase === PHASE.PLAYING && !!this.cur && !this.cur.released);
