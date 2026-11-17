@@ -22,10 +22,10 @@ export const FONT = '"Inter","Segoe UI","Roboto","Helvetica Neue",Arial,sans-ser
 
 // word + colour + symbol for each outcome. `symbol` is drawn with paths (see cards.js), so it never depends on a font.
 export const OUTCOME = Object.freeze({
-  green: { word: 'GREEN', color: COLORS.green, symbol: 'check', note: 'Locked on' },
-  amber: { word: 'AMBER', color: COLORS.amber, symbol: 'wave', note: 'Caught it late' },
-  red: { word: 'RED', color: COLORS.red, symbol: 'cross', note: 'Looked away' },
-  unscored: { word: 'UNSCORED', color: COLORS.unscored, symbol: 'dash', note: 'Tracking too weak. Not a miss' },
+  green: { word: 'Good sight', color: COLORS.green, symbol: 'check', note: 'Locked on' },
+  amber: { word: 'Average', color: COLORS.amber, symbol: 'wave', note: 'Caught it late' },
+  red: { word: 'Lost eye contact', color: COLORS.red, symbol: 'cross', note: 'Looked away' },
+  unscored: { word: 'Unscored', color: COLORS.unscored, symbol: 'dash', note: 'Tracking too weak. Not a miss' },
 });
 
 // Where the person is looking from, as a plain label that is shown on the scorecard and the HUD.

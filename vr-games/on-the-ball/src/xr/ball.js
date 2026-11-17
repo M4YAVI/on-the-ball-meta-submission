@@ -1,7 +1,8 @@
 // The ball and the ring that marks the live ball (deck slide 5). The ball is drawn at least ~0.9 degrees across so it can be
-// followed from the bowler's end; the ring is a fixed ~3.4 degrees around it. A red leather cricket ball with a cream seam,
+// followed from the bowler's end; the ring is a fixed ~2.7 degrees around it. A red leather cricket ball with a cream seam,
 // as in the deck (slide 5 picture, slide 12 "The ball: a red sphere"). To stay easy to follow against grass and sky, the ball is
-// lit from inside (emissive), carries a soft warm glow, and always has the white ring around it.
+// lit from inside (emissive) and carries a soft warm glow. The ring is deliberately restrained: thin, low in the picture and
+// faded in over the first fifth of a second after release, so it reads as a guide rather than a floating target.
 //
 // Guide ring: while the player is on the ball the ring eases to green, and eases back to white when they are not. It never
 // turns red mid-ball. It is feedback only; scoring does not read it.
@@ -69,8 +70,8 @@ export class BallRig {
     );
     this.glow.renderOrder = 29;
     this.ring = new Mesh(
-      new RingGeometry(0.93, 1, 72),
-      new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthTest: false, depthWrite: false, toneMapped: false }),
+      new RingGeometry(0.955, 1, 72),
+      new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthTest: false, depthWrite: false, toneMapped: false }),
     );
     this.ring.renderOrder = 30;
     this.group.add(this.glow, this.ball, this.ring);
@@ -101,6 +102,7 @@ export class BallRig {
       this.age = 0;
       this.lock = 0;
       this.ring.material.color.copy(WHITE);
+      this.ring.material.opacity = 0;
     }
   }
 
@@ -110,24 +112,27 @@ export class BallRig {
     const rate = locked ? 14 : 8; // turns green quickly, fades back a little slower
     this.lock += (target - this.lock) * Math.min(1, dt * rate);
     this.ring.material.color.copy(WHITE).lerp(GREEN, this.lock);
-    this.ring.material.opacity = 0.85 + 0.15 * this.lock;
   }
 
   // local: ball position in the parent's frame. dist: distance from the viewer's eyes (metres). eyeWorld: the eyes in world space
   // (the ring and glow turn to face them).
   place(local, dist, eyeWorld, dt) {
     this.age += dt;
+    const reveal = Math.min(1, this.age / 0.2); // the ring fades in after release instead of popping as a target
+    const ease = reveal * reveal * (3 - 2 * reveal);
     this.group.position.copy(local);
     const r = drawnRadius(dist);
-    this.ball.scale.setScalar(r);
+    this.ball.scale.setScalar(r * (0.9 + 0.1 * ease));
     // a short bright flash as it leaves the hand, then a steady soft glow
-    const flash = Math.max(0, 1 - this.age / 0.18);
-    this.glow.scale.setScalar(r * (5 + 6 * flash));
+    const flash = Math.max(0, 1 - this.age / 0.12);
+    this.glow.scale.setScalar(r * (4 + 3 * flash) * (0.7 + 0.3 * ease));
     this.glow.lookAt(eyeWorld);
-    const ring = ringRadius(dist) * (1 + 0.08 * this.lock); // a touch larger when locked
+    // thinner and smaller than before, and it eases in: enough to follow, not a floating target
+    const ring = ringRadius(dist) * (0.72 + 0.28 * ease) * (1 + 0.06 * this.lock);
     this.ring.scale.setScalar(ring);
+    this.ring.material.opacity = (0.55 + 0.2 * this.lock) * ease;
     this.ring.lookAt(eyeWorld);
-    this.spin += dt * 18;
+    this.spin += dt * 24;
     this.ball.rotation.set(this.spin * 0.6, this.spin, 0);
   }
 }

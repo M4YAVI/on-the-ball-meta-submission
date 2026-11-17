@@ -12,7 +12,7 @@ import { startRoll, stepRoll } from './core/ball-path.js';
 import { createSystem, Group, Mesh, MeshBasicMaterial, Pressed, Quaternion, RayInteractable, RingGeometry, SphereGeometry, Vector3, VisibilityState } from '@iwsdk/core';
 import { angle, STATUS, TOLERANCE as BASE_TOLERANCE, toleranceFor, Trial } from './core/engine.js';
 import { CAL, CalibrationCheck, GazeVerdict, VERDICT } from './core/gaze-verdict.js';
-import { ballPosition, bounceT, flightMs, PATH, SPEED_OPTIONS } from './core/ball-path.js';
+import { ballPosition, bounceT, flightMs, PATH, PHYS, RUN_UP, SPEED_OPTIONS } from './core/ball-path.js';
 import { GameFlow, MODE, PHASE } from './core/flow.js';
 import { HistoryStore } from './core/history.js';
 import { CricketScene } from './xr/cricket-scene.js';
@@ -21,9 +21,14 @@ import { Rays } from './xr/rays.js';
 import { Sfx } from './xr/audio.js';
 import { Ui } from './xr/ui.js';
 import { COLORS } from './xr/theme.js';
+import { Bat } from './xr/bat.js';
+import { ShotCallout } from './xr/shot-callout.js';
+import { TimingMeter } from './xr/timing-meter.js';
+import { MouseBat } from './xr/mouse-bat.js';
+import { batBounce, HIT, hapticFor, launch, perfectLaunch, shotKind, stepBatted, sweepHit, timingOf } from './core/bat-physics.js';
 
-const LEAD_IN = 0.9; // s: the bowler stands, gathers and brings his arm over before the ball is released (no run-up)
-const GAP = 2.2; // s between deliveries
+const LEAD_IN = RUN_UP.leadIn; // s: the bowler runs in from his mark, braces and brings his arm over before release
+const GAP = 3.1; // s between deliveries (long enough for the jog back to the mark)
 const TOLERANCE = BASE_TOLERANCE.base; // 7 deg near the centre; eye mode widens it toward the edge (core/engine.js toleranceFor)
 const CAL_ANGLE = 14; // degrees to each side for the calibration dots
 const CAL_DIST = 2.4;
@@ -31,6 +36,15 @@ const PREFS_KEY = 'otb.prefs.v1';
 const LOCK_ON_MS = 100; // guide ring: on the ball this long before it turns green
 const MAX_FLIGHT_STEP = 0.05; // s: the most the ball's flight clock moves in one frame (see stepPlay)
 const LOCK_OFF_MS = 150; // and off the ball this long before it goes back to white (no flicker)
+const HIT_LINGER = 0.45; // s after a hit (and after the ball's arrival time) before the delivery is closed
+const SWISH_SPEED = 7.5; // m/s at the sweet spot: a swing this fast whooshes
+// Forgiving contact size: metres added to the ball's radius in the bat test, so a ball that just grazes past still counts. It
+// is a slightly bigger target, not aim assist: the bat and the ball are never moved toward each other. The PC control gets more
+// because a wheel is cruder than an arm.
+const HIT_PAD = 0.02;
+const PC_HIT_PAD = 0.05;
+// The bat is in hand on these screens: practice swings before the first ball, every delivery, and the pause.
+const BAT_PHASES = new Set([PHASE.READY, PHASE.PLAYING, PHASE.BETWEEN, PHASE.PAUSED]);
 
 function safeStorage() {
   try {
@@ -88,6 +102,22 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.anchor.add(this.headDot);
     this.readyDot = this.makeReadyDot();
     this.anchor.add(this.readyDot);
+    // Batting: the bat follows the player's hand; a hit sends the ball away by the bat's speed and direction. The eye-tracking
+    // score does not change: it still follows the ball (wherever it goes) and still ends at the ball's arrival.
+    this.bat = new Bat(this.world);
+    this.anchor.add(this.bat.group);
+    this.callout = new ShotCallout();
+    this.anchor.add(this.callout.mesh);
+    this.meter = new TimingMeter(); // EARLY / PERFECT / LATE on the right: feedback for the shot, never part of the score
+    this.anchor.add(this.meter.mesh);
+    this.batted = null; // the last batted ball, still flying or rolling after its delivery was scored
+    this.swishAt = -Infinity;
+    this.hitOnce = false;
+    // Desktop emulator only: the mouse stands in for the hand (a headset never uses this).
+    this.mouseBat = new MouseBat(this.world);
+    this.anchor.add(this.mouseBat.hint);
+    this.bat.override = () => this.mouseBat.pose(this.anchor);
+    this.cleanupFuncs.push(() => this.mouseBat.dispose());
 
     this.eyeAvailable = false;
     this.eyeNote = '';
@@ -186,7 +216,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
   prewarm() {
     const r = this.world.renderer;
     if (!r) return;
-    const objs = [this.ball.group, this.readyDot, this.calDots, this.headDot];
+    const objs = [this.ball.group, this.readyDot, this.calDots, this.headDot, this.bat.group, this.callout.mesh, this.meter.mesh];
     const was = objs.map((o) => o.visible);
     try {
       objs.forEach((o) => (o.visible = true));
@@ -283,12 +313,12 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     return m;
   }
 
-  // A soft glowing point at the bowler's hand while he gathers, so the eyes are already where the ball will appear. It fades
-  // in over the lead-in and is gone the moment the ball is released.
+  // A soft glowing point at the bowler's hand while he gathers, so the eyes are already where the ball will appear. It follows
+  // the bowling hand through the run-in (no floating dot at the crease) and is gone the moment the ball is released.
   makeReadyDot() {
     const m = new Mesh(
-      new SphereGeometry(0.11, 16, 12),
-      new MeshBasicMaterial({ color: '#fffbe8', transparent: true, opacity: 0, depthWrite: false, toneMapped: false }),
+      new SphereGeometry(0.075, 16, 12),
+      new MeshBasicMaterial({ color: '#ffd9a0', transparent: true, opacity: 0, depthWrite: false, toneMapped: false }),
     );
     m.position.set(PATH.releaseX, PATH.releaseY, PATH.releaseZ + 0.3);
     m.renderOrder = 27;
@@ -475,7 +505,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       case 'btn:exit2':
         this.cur = null;
         this.roll = null;
-    this.ball.show(false);
+        this.batted = null;
+        this.callout.hide();
+        this.meter.clear();
+        this.ball.show(false);
         this.flash = null;
         this.finishedTs = null;
         this.nextAt = null;
@@ -612,6 +645,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.cur = null;
     this.nextAt = null;
     this.roll = null;
+    this.batted = null;
+    this.callout.hide();
+    this.meter.clear();
     this.ball.show(false);
     this.readyDot.visible = false;
     this.scene3d.setDelivery(null);
@@ -636,10 +672,13 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     // At a steady headset frame rate every step is far below the cap, so nothing changes there.
     const lead = c.released ? (c.flight += Math.min(dt, MAX_FLIGHT_STEP)) : time - c.t0;
     if (lead < 0) {
-      this.scene3d.setDelivery(lead); // seconds to release: the bowler's arm comes up and over
-      const k = Math.min(1, (lead + LEAD_IN) / 0.35); // fade in, then a gentle pulse
+      this.scene3d.setDelivery(lead); // seconds to release: the run-in, the brace and the arm over
+      // The eyes are led by the bowler's hand itself: the glow rides the hand through the last strides and the arm over. It is
+      // small and amber, not a white target waiting at the crease, and it is gone before the ball appears.
+      const k = Math.min(1, Math.max(0, (lead + 0.7) / 0.35));
       this.readyDot.visible = true;
-      this.readyDot.material.opacity = k * (0.55 + 0.2 * Math.sin(time * 9));
+      this.readyDot.material.opacity = k * (0.4 + 0.12 * Math.sin(time * 7));
+      if (this.scene3d.handLocal(this.local)) this.readyDot.position.copy(this.local);
       return;
     }
     if (!c.released) {
@@ -647,20 +686,45 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       c.flight = Math.min(lead, MAX_FLIGHT_STEP);
       this.readyDot.visible = false;
       this.ball.show(true);
-      this.sfx.play('ui', 0.25); // a soft click at release: the ball is away
+      const rel = ballPosition(0, c.delivery.lane, c.delivery.curve, c.delivery.length, c.kmh);
+      this.local.set(rel[0], rel[1], rel[2]);
+      this.world3.copy(this.local);
+      this.anchor.localToWorld(this.world3);
+      this.sfx.play('bowling', 0.5, { kmh: c.kmh, pos: this.world3 });
+      c.prev = rel;
+      this.batted = null; // the ball of the last delivery is picked up: the same ball is bowled again
     }
     this.scene3d.setDelivery(c.flight); // seconds since release: the follow-through after the ball has gone
     const ms = c.flight * 1000;
     if (ms >= c.dur) {
       // Past the arrival point the ball keeps flying past the player, lands behind them and stays there. Scoring ended at arrival.
-      c.roll ??= startRoll((u) => ballPosition(u, c.delivery.lane, c.delivery.curve, c.delivery.length, c.kmh), c.dur);
-      stepRoll(c.roll, dt);
+      // The bat can still meet it here: the arrival point is in front of the body, and a late cut or a glance plays it later.
+      if (!c.hit) {
+        c.roll ??= startRoll((u) => ballPosition(u, c.delivery.lane, c.delivery.curve, c.delivery.length, c.kmh), c.dur, 0.5, true);
+        stepRoll(c.roll, dt);
+        this.tryBat(c, c.roll.p, c.roll.v, time);
+      } else this.advanceHit(c.hit, dt);
+      if (c.hit) {
+        this.placeBatted(c.hit.st, dt);
+        if (time - c.hit.at >= HIT_LINGER) this.finishBall(time);
+        return;
+      }
       this.placeRoll(c.roll, dt);
       if (c.roll.p[2] >= 1.0 || c.roll.rest) this.finishBall(time);
       return;
     }
     const t01 = ms / c.dur;
-    const p = ballPosition(t01, c.delivery.lane, c.delivery.curve, c.delivery.length, c.kmh);
+    let p;
+    if (c.hit) {
+      // Hit before its arrival point: the eyes are still scored, against where the ball really is now (off the bat).
+      this.advanceHit(c.hit, dt);
+      p = c.hit.st.p;
+    } else {
+      p = ballPosition(t01, c.delivery.lane, c.delivery.curve, c.delivery.length, c.kmh);
+      const step = Math.min(dt, MAX_FLIGHT_STEP);
+      const v = c.prev && step > 0 ? [(p[0] - c.prev[0]) / step, (p[1] - c.prev[1]) / step, (p[2] - c.prev[2]) / step] : [0, 0, 0];
+      if (this.tryBat(c, p, v, time)) p = c.hit.st.p;
+    }
     this.local.set(p[0], p[1], p[2]);
     this.world3.copy(this.local);
     this.anchor.localToWorld(this.world3);
@@ -727,7 +791,79 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.ball.place(this.local, this.world3.distanceTo(this.o), this.o, dt);
     if (!c.bounced && t01 >= bounceT(c.delivery.length, c.kmh)) {
       c.bounced = true;
-      this.sfx.play('bounce', 0.35);
+      this.sfx.play('bounce', 0.35, { kmh: c.kmh, pos: this.world3 });
+    }
+  }
+
+  // ------------------------------------------------------------------ batting
+  // Did the bat meet the ball between the last frame and this one? p: the ball's position now, v: its velocity (eye frame).
+  // On a hit the ball leaves the blade with the bat's own speed and direction (core/bat-physics.js), with a sound and a pulse.
+  tryBat(c, p, v, time) {
+    const prev = c.prev;
+    c.prev = [p[0], p[1], p[2]];
+    const bat = this.bat;
+    if (!prev || !bat.pose || !bat.prevPose) return false;
+    const r = PHYS.ballRadius + (bat.pcDriven ? PC_HIT_PAD : HIT_PAD);
+    const contact = sweepHit(bat.prevPose, bat.pose, prev, p, r);
+    if (!contact) return false;
+    const batV = bat.velocityAt([0, contact.local[1], contact.local[2]], time);
+    let res = batBounce(v, batV, contact);
+    const n = res.normal;
+    const start = [contact.ball[0] + n[0] * 0.012, contact.ball[1] + n[1] * 0.012, contact.ball[2] + n[2] * 0.012];
+    // Timing: where the bat met the ball. A PERFECT touch off the middle of a real swing goes out of the ground; the player's own
+    // swing still decides the direction and whether it qualifies. Anything else flies by plain physics.
+    const batSpeed = Math.min(Math.hypot(...batV), HIT.maxBatSpeed);
+    const timing = timingOf(contact.ball[2]);
+    const big = perfectLaunch(res.v, timing, res, batSpeed);
+    if (big) res = { ...res, v: big };
+    const kmh = Math.hypot(res.v[0], res.v[1], res.v[2]) * 3.6;
+    c.hit = { st: launch(start, res.v), res, at: time, kmh, said: null, timing, perfect: !!big };
+    this.meter.show(timing, !!big);
+    this.hitOnce = true;
+    this.world3.set(start[0], start[1], start[2]);
+    this.anchor.localToWorld(this.world3);
+    const loud = Math.min(1, res.impact / 35);
+    this.sfx.play(res.edge ? 'edge' : 'bat', 0.35 + 0.5 * loud, { kmh: Math.max(60, kmh), pos: this.world3 });
+    const hp = hapticFor(res);
+    bat.pulse(hp.intensity, hp.ms);
+    if (import.meta.env.DEV) {
+      console.info(`[otb] hit ${res.edge ? 'edge' : res.sweet ? 'middle' : 'bat'} exit=${kmh.toFixed(0)}km/h bat=${Math.hypot(...batV).toFixed(1)}m/s e=${res.e.toFixed(2)} timing=${timing.zone} z=${contact.ball[2].toFixed(2)}${big ? ' PERFECT' : ''}`);
+    }
+    return true;
+  }
+
+  // Move a batted ball on, and call the shot once it is clear what it was (a boundary can upgrade an earlier call).
+  advanceHit(h, dt) {
+    stepBatted(h.st, dt);
+    const kind = shotKind(h.st, h.res);
+    if (!kind || kind === h.said) return;
+    const boundary = kind === 'six' || kind === 'four';
+    if (h.said && !boundary) return;
+    h.said = kind;
+    if (import.meta.env.DEV) console.info(`[otb] shot ${kind}${h.perfect ? ' (perfect timing)' : ''}`);
+    this.callout.show(kind, h.kmh);
+    if (boundary) this.sfx.play('cheer', kind === 'six' ? 0.5 : 0.38);
+  }
+
+  placeBatted(st, dt) {
+    this.local.set(st.p[0], st.p[1], st.p[2]);
+    this.world3.copy(this.local);
+    this.anchor.localToWorld(this.world3);
+    this.ball.coast(this.local, this.world3.distanceTo(this.o), st.rest ? 0 : dt);
+  }
+
+  updateBat(dt, time) {
+    const on = BAT_PHASES.has(this.flow.phase);
+    this.bat.setEnabled(on);
+    this.meter.setEnabled(on && !!this.world.session);
+    if (!on) this.mouseBat.reset();
+    this.mouseBat.showHint(on && !this.hitOnce);
+    if (!this.bat.update(this.anchor, dt, time)) return;
+    const sp = this.bat.tipSpeed(time);
+    if (sp > SWISH_SPEED && time - this.swishAt > 0.5) {
+      this.swishAt = time;
+      this.bat.group.getWorldPosition(this.world3);
+      this.sfx.play('swish', 0.12 + 0.3 * Math.min(1, (sp - SWISH_SPEED) / 14), { pos: this.world3 });
     }
   }
 
@@ -784,7 +920,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const f = this.flow;
     const summary = c.trial.finish();
     this.cur = null;
-    this.roll = c.roll ?? null; // the ball is not removed: it keeps rolling behind the player and stays at rest
+    this.roll = c.hit ? null : c.roll ?? null; // the ball is not removed: it keeps rolling behind the player and stays at rest
+    this.batted = c.hit ?? null; // a hit ball flies on (to the rope, or into the field) while the next ball is set up
     const entry = f.completeBall(summary, Date.now());
     if (!entry) return;
     if (import.meta.env.DEV) {
@@ -845,9 +982,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (this.needAnchor && inXR) this.tryAnchor();
     if (inXR) this.hideInputModels();
     this.rays.noteGaze(time);
-    this.scene3d.update(dt);
+    if (this.world?.camera) this.sfx.updateListener(this.world.camera);
     this.ui.update();
     this.updateHeadDot();
+    this.updateBat(dt, time); // before the ball moves, so the hit test uses this frame's bat
 
     switch (this.flow.phase) {
       case PHASE.MODE:
@@ -867,11 +1005,23 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
           stepRoll(this.roll, dt);
           this.placeRoll(this.roll, dt);
         }
+        if (this.batted) {
+          this.advanceHit(this.batted, dt);
+          this.placeBatted(this.batted.st, dt);
+        }
         if (this.nextAt !== null && time >= this.nextAt) this.beginBall();
         break;
       default:
         break;
     }
+    // While the next bowler runs in, the last batted ball is still in play (a six can still be in the air).
+    if (this.flow.phase === PHASE.PLAYING && this.batted && !this.cur?.released) {
+      this.advanceHit(this.batted, dt);
+      this.placeBatted(this.batted.st, dt);
+    }
+    this.callout.update(dt);
+    this.meter.update(dt);
+    this.scene3d.update(dt); // after the phase: the bowler is posed from this frame's delivery clock
     if (this.flash && this.flash.until < time && this.flow.phase !== PHASE.SCORECARD) {
       this.flash = null;
       this.refreshUi();

@@ -7,7 +7,7 @@
 // Coordinates are in the viewer's frame: x to the right, y up from the eye, z negative straight ahead. The scene is placed
 // so that frame follows the seated player's eye position, so a delivery looks the same whatever their height.
 //
-// One delivery is real ball flight, not a drawn curve. The bowler releases the ball from about 2.15 m (right arm, a little to
+// One delivery is real ball flight, not a drawn curve. The bowler releases the ball from about 2.0 m (right arm, a little to
 // the batsman's left) at the chosen speed in km/h. In the air it falls under gravity and slows with air drag. It pitches on
 // a length, loses height and pace on the bounce (a cricket ball keeps about half its downward speed and most of its forward
 // speed), then rises to the batsman and is gone about 1.2 m in front of the eyes, below waist height, where a bat would meet
@@ -21,9 +21,9 @@ import { clamp } from './engine.js';
 export const FOV = Object.freeze({ left: 37, right: 37, up: 25, down: 43 }); // Meta VR Glasses, degrees
 
 export const PATH = Object.freeze({
-  releaseZ: -18.2, // the bowler's hand, just in front of the far popping crease (22 yards between the stumps)
-  releaseX: -0.22, // a right-arm bowler's hand, over the wicket, is slightly to the batsman's left
-  releaseY: 0.95, // about 2.15 m above the ground
+  releaseZ: -18.28, // the bowler's hand, just in front of the far popping crease (22 yards between the stumps)
+  releaseX: -0.24, // a right-arm bowler's hand, over the wicket, is slightly to the batsman's left
+  releaseY: 0.78, // about 2.0 m above the ground: the hand's reach at release, so the ball leaves it, not the air above it
   endZ: -1.2, // arrival: where the bat would meet the ball, in front of the batting crease
   bounceZ: -5.0, // a good length pitches about 6 m in front of the batsman's stumps
   lengthSpreadM: 1.5, // full balls pitch up to this much closer, short balls this much further away
@@ -57,6 +57,88 @@ export const FIELD = Object.freeze({
   bowlerStumpsZ: -19.25, // the far end
   bowlerZ: -18.7, // where the bowler model stands at release
 });
+
+// The bowler's run-up, in the same eye frame (metres and seconds relative to release). A real fast bowler runs in from a
+// mark 10-15 strides back, builds to about 5 m/s by back-foot contact, then brakes hard on a braced front leg over the last
+// 0.26 s before release (README of the research: run-up speeds 4.8-6.8 m/s, front foot contact to release ~0.13 s). The
+// gait here is a medium-pace action: a straight, gradually accelerating run, a short bound, a braced front leg, then a
+// follow-through past the stumps. `leadIn` is the whole sequence from standing on his mark to the ball leaving the hand, so
+// the game waits exactly that long before the ball exists (LEAD_IN in game.js reads it); it equals -startLead.
+//
+// The run is split into four timed segments, each with its own speed, so the body arrives at the crease moving rather than
+// sliding: accelerate (0 -> speed), cruise, bound (slight slow-down into the jump), and brake (front foot down -> release).
+// Distances are integrated exactly, so the mark sits `markM` behind the bowler's release spot and the timing stays true
+// whatever the geometry says.
+const RUN_T = Object.freeze({
+  accel: 0.9, // s from the mark to cruise speed
+  cruise: 1.15, // s at full pace
+  bound: 0.36, // s from take-off to front-foot contact (the delivery stride)
+  brake: 0.26, // s from front-foot contact to release
+  speed: 5.4, // m/s at the end of the run-in
+  braceSpeed: 4.9, // m/s when the front foot lands
+  releaseSpeed: 2.2, // m/s of the body at release, after the front leg has braked
+  windUp: 0.7, // s from release to the end of the follow-through
+  stride: 2.35, // metres of ground per full stride (a left and a right step)
+});
+const RUN_LEAD = RUN_T.accel + RUN_T.cruise + RUN_T.bound + RUN_T.brake; // 2.67 s
+const RUN_MARK =
+  (RUN_T.speed * RUN_T.accel) / 2 + // smoothstep acceleration: average speed is half the cruise
+  RUN_T.speed * RUN_T.cruise +
+  ((RUN_T.speed + RUN_T.braceSpeed) / 2) * RUN_T.bound +
+  ((RUN_T.braceSpeed + RUN_T.releaseSpeed) / 2) * RUN_T.brake; // 11.4 m
+
+export const RUN_UP = Object.freeze({
+  startX: -0.55, // a right-arm over-the-wicket line, wide of the stumps
+  startZ: FIELD.bowlerZ - RUN_MARK, // the mark, out beyond the far stumps
+  markM: RUN_MARK,
+  startLead: -RUN_LEAD, // s before release: he is standing on his mark
+  boundLead: -(RUN_T.bound + RUN_T.brake), // s before release: take-off into the delivery stride
+  braceLead: -RUN_T.brake, // s before release: front foot contact, the leg braces
+  leadIn: RUN_LEAD, // s from the start of the run to release
+  strideM: RUN_T.stride,
+  windUp: RUN_T.windUp, // s from release to the end of the follow-through
+  accelT: RUN_T.accel,
+  cruiseT: RUN_T.cruise,
+  boundT: RUN_T.bound,
+  brakeT: RUN_T.brake,
+  speed: RUN_T.speed,
+  braceSpeed: RUN_T.braceSpeed,
+  releaseSpeed: RUN_T.releaseSpeed,
+  followM: (RUN_T.releaseSpeed * RUN_T.windUp) / 2, // metres carried past the crease
+});
+
+// Ground covered from the mark at tRel (seconds relative to release). Exact integrals of the speed profile above, so the
+// body's speed is continuous and the feet never skate: 0 on the mark, RUN_UP.markM at release, +followM at the end.
+export function runDistance(tRel) {
+  const t = Number.isFinite(tRel) ? tRel : RUN_UP.startLead;
+  const lead = -RUN_UP.startLead;
+  const a = RUN_UP.accelT;
+  const b = RUN_UP.boundT;
+  const r = RUN_UP.brakeT;
+  const v = RUN_UP.speed;
+  const vb = RUN_UP.braceSpeed;
+  const vr = RUN_UP.releaseSpeed;
+  const dAccel = (v * a) / 2;
+  const dCruise = v * RUN_UP.cruiseT;
+  const dBound = ((v + vb) / 2) * b;
+  const dBrake = ((vb + vr) / 2) * r;
+  if (t <= -lead) return 0;
+  if (t < -lead + a) {
+    const k = (t + lead) / a;
+    return v * a * (k * k * k - 0.5 * k * k * k * k); // integral of smoothstep
+  }
+  if (t <= RUN_UP.boundLead) return dAccel + v * (t + lead - a);
+  if (t <= RUN_UP.braceLead) {
+    const s = t - RUN_UP.boundLead;
+    return dAccel + dCruise + v * s - (0.5 * (v - vb) * s * s) / b;
+  }
+  if (t <= 0) {
+    const s = t - RUN_UP.braceLead;
+    return dAccel + dCruise + dBound + vb * s - (0.5 * (vb - vr) * s * s) / r;
+  }
+  const s = Math.min(t, RUN_UP.windUp);
+  return RUN_UP.markM + vr * s - (0.5 * vr * s * s) / RUN_UP.windUp;
+}
 
 // Release speeds a batsman really faces. Scores at different speeds are not comparable, so the speed id is stored with each
 // session. "Fast" is the deck's half-second ball. Spin is the default: quick enough to feel real, slow enough that one blink
@@ -180,7 +262,7 @@ export function drawnRadius(distance, realRadius = 0.036, minAngularDeg = 0.9) {
   const d = Math.max(0.1, Number.isFinite(distance) ? distance : 0.1);
   return Math.max(realRadius, d * Math.tan((minAngularDeg * Math.PI) / 180));
 }
-export function ringRadius(distance, ringAngularDeg = 3.4) {
+export function ringRadius(distance, ringAngularDeg = 2.7) {
   const d = Math.max(0.1, Number.isFinite(distance) ? distance : 0.1);
   return d * Math.tan((ringAngularDeg * Math.PI) / 180);
 }
@@ -211,7 +293,10 @@ export function cryptoRng() {
 // the face). Scoring is finished at arrival and does not read any of this.
 const ROLL = Object.freeze({ g: 9.81, wallZ: 2.6, wallX: 3.4, groundY: -1.2, restitution: 0.42, rollFriction: 1.6, radius: 0.05 });
 
-export function startRoll(posAt, durMs, passClearM = 0.5) {
+// clearIn3d (cricket batting): steer only when the ball would really pass within passClearM of the eyes, counting its height
+// too. A ball arriving below the waist then carries straight on through the batting zone, where the bat can meet it, instead
+// of sliding sideways past the bat. The other sports keep the original sideways clearance.
+export function startRoll(posAt, durMs, passClearM = 0.5, clearIn3d = false) {
   const eps = 0.02;
   const p1 = posAt(1);
   const p0 = posAt(1 - eps);
@@ -221,7 +306,9 @@ export function startRoll(posAt, durMs, passClearM = 0.5) {
   const vz = Math.max((p1[2] - p0[2]) / T, 4);
   const tz = Math.max(1e-3, -p1[2] / vz);
   const xPass = p1[0] + vx * tz;
-  if (Math.abs(xPass) < passClearM) {
+  const yPass = p1[1] + vy * tz - 0.5 * ROLL.g * tz * tz;
+  const near = clearIn3d ? Math.hypot(xPass, yPass) < passClearM : Math.abs(xPass) < passClearM;
+  if (near) {
     const side = xPass !== 0 ? Math.sign(xPass) : p1[0] !== 0 ? Math.sign(p1[0]) : 1;
     vx = (side * passClearM - p1[0]) / tz;
   }

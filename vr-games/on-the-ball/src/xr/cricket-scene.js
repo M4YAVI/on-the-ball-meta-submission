@@ -32,7 +32,8 @@ import {
   Vector3,
 } from '@iwsdk/core';
 
-import { FIELD } from '../core/ball-path.js';
+import { FIELD, RUN_UP, runDistance } from '../core/ball-path.js';
+import { GROUND_PLAN } from '../core/bat-physics.js';
 
 export const GROUND = FIELD.ground; // metres below the eyes
 const PITCH_W = 3.05; // 10 ft between the return creases
@@ -40,9 +41,21 @@ const PITCH_NEAR = FIELD.batsmanStumpsZ + 1.3; // the pitch runs on behind the b
 const PITCH_FAR = FIELD.bowlerStumpsZ - 1.3;
 const PITCH_MID = (PITCH_NEAR + PITCH_FAR) / 2;
 const CENTER_Z = (FIELD.batsmanStumpsZ + FIELD.bowlerStumpsZ) / 2; // middle of the ground: the pitch sits on it
-const ROPE_R = 27.5;
-const FENCE_R = 30;
+const ROPE_R = GROUND_PLAN.ropeR; // the batted ball's boundary uses the same numbers (core/bat-physics.js)
+const FENCE_R = GROUND_PLAN.fenceR;
 const ARM = Object.freeze({ start: -0.34, end: 0.32 }); // seconds around the release: one full turn of the bowling arm
+const FOLLOW_M = RUN_UP.followM; // metres the bowler carries through past his mark after release
+const WALK_BACK = 2.9; // s to jog back to his mark between deliveries
+// A run at 20 m still reads through the body, not the face: the swing of the legs and arms, the twist of the shoulders and a
+// small bob from the footfalls. Values are radians / metres of offset from the idle pose. The knees fold on the leg that is
+// behind, so the trailing heel comes up instead of the leg swinging stiff.
+const GAIT = Object.freeze({ thigh: 0.72, calf: 0.5, arm: 0.4, spine: 0.14, head: 0.7, bob: 0.05 });
+
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const smooth = (a, b, x) => {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
 
 // Small seeded generator so the ground looks the same on every run.
 function seeded(seed) {
@@ -175,6 +188,12 @@ export class CricketScene {
     this.root.name = 'cricket-ground';
     this.mixer = null;
     this.arm = null;
+    // scratch for the bowling arm's world-space swing (no allocation per frame)
+    this._qRoot = new Quaternion();
+    this._qArm = new Quaternion();
+    this._qParent = new Quaternion();
+    this._qSpin = new Quaternion();
+    this._axis = new Vector3(1, 0, 0);
 
     this.buildLights();
     this.buildGround();
@@ -381,23 +400,149 @@ export class CricketScene {
     if (idle) this.mixer.clipAction(idle).setLoop(LoopRepeat, Infinity).play();
     this.arm = model.getObjectByName('upperarm_r');
     this.forearm = model.getObjectByName('lowerarm_r');
+    this.bones = {
+      head: model.getObjectByName('Head'),
+      spine: model.getObjectByName('spine_03'),
+      thighL: model.getObjectByName('thigh_l'),
+      thighR: model.getObjectByName('thigh_r'),
+      calfL: model.getObjectByName('calf_l'),
+      calfR: model.getObjectByName('calf_r'),
+      clavicleL: model.getObjectByName('clavicle_l'),
+      clavicleR: model.getObjectByName('clavicle_r'),
+      hand: model.getObjectByName('hand_r'),
+    };
+    this.deliveryT = null;
+    this.gotDelivery = false;
+    this.walk = 1; // between deliveries he waits on his mark, not at the crease
+    this.placeBowler(RUN_UP.startX, GROUND, RUN_UP.startZ, 0, 0);
+  }
+
+  // Whole-body placement plus a little forward lean. Position is the model's feet on the grass; lean is radians about the
+  // hips, yaw turns him side-on into the delivery, roll leans him over the braced leg. Yaw of PI turns him away to walk back.
+  placeBowler(x, y, z, lean, yaw, roll = 0) {
+    if (!this.bowler) return;
+    this.bowler.position.set(x, y, z);
+    this.bowler.rotation.set(lean, yaw, roll);
+  }
+
+  // The bowling hand, in the anchor frame (where the ready glow sits before release). False if the rig has no hand bone.
+  handLocal(target) {
+    const hand = this.bones?.hand;
+    if (!hand) return false;
+    hand.getWorldPosition(target);
+    this.root.worldToLocal(target);
+    return true;
+  }
+
+  // A running gait laid over the idle pose: legs alternate, the trailing knee folds, the arms counter-swing and the shoulders
+  // twist. `swing` is the sine of the stride phase, `amp` fades the whole cycle in and out so it never starts or stops with a
+  // jerk. Called after the mixer, so these are offsets for this frame only.
+  applyGait(swing, amp) {
+    const b = this.bones;
+    if (!b) return;
+    const s = swing * amp;
+    if (b.thighL) b.thighL.rotation.x += s * GAIT.thigh;
+    if (b.thighR) b.thighR.rotation.x -= s * GAIT.thigh;
+    // The knee folds on the leg swinging back (heel to the seat), not on the leg reaching forward: a runner's recovery leg.
+    if (b.calfL) b.calfL.rotation.x -= Math.max(0, -s) * GAIT.calf;
+    if (b.calfR) b.calfR.rotation.x -= Math.max(0, s) * GAIT.calf;
+    // Arms swing from the shoulders (the clavicle's local x is the spine's lateral axis), opposite to the legs.
+    if (b.clavicleL) b.clavicleL.rotation.x -= s * GAIT.arm;
+    if (b.clavicleR) b.clavicleR.rotation.x += s * GAIT.arm;
+    if (b.spine) b.spine.rotation.y += s * GAIT.spine;
+  }
+
+  // The run-in and the delivery. tRel is seconds relative to the moment the ball leaves the hand: from -RUN_UP.leadIn (standing
+  // on his mark) through the accelerating strides, the bound and the braced front leg, the arm over, and the follow-through.
+  // The body travels on runDistance (exact integral of the speed profile), so the strides match the ground and he arrives at
+  // the crease at pace instead of sliding. The shoulder turns side-on into the bound and squares up through release; the head
+  // stays level and on the batsman.
+  runUp(tRel) {
+    const s = RUN_UP;
+    const dist = runDistance(tRel);
+    const u = clamp01(dist / s.markM);
+    const z = s.startZ + dist;
+    const x = s.startX * (1 - smooth(0.86, 1, u)); // runs wide, then steps onto the line to bowl
+    const stride = (dist / s.strideM) * Math.PI * 2;
+    // The stride cycle fades in off the mark and settles as the front foot lands; after that the legs hold the delivery pose.
+    const running = smooth(0, 0.06, u) * (1 - smooth(s.boundLead, s.braceLead, tRel));
+    const bob = GAIT.bob * running * (0.5 - 0.5 * Math.cos(2 * stride));
+    const bound = 0.07 * Math.sin(Math.PI * clamp01((tRel - s.boundLead) / s.boundT)); // a short airborne bound
+    const leanRun = 0.16 * (1 - smooth(0.84, 1, u));
+    const brace = clamp01((tRel - s.braceLead) / (s.brakeT + 0.3)); // 0 at front-foot contact, 1 by the end of the action
+    const lean = leanRun + 0.2 * Math.sin(Math.PI * brace); // bows into the delivery and recovers
+    const yaw = 0.3 * (smooth(s.boundLead, s.braceLead, tRel) - smooth(s.braceLead, -0.02, tRel)); // side-on, then square at release
+    const roll = -0.06 * (smooth(s.braceLead, 0, tRel) - smooth(0.18, 0.5, tRel)); // over the braced front leg
+    this.placeBowler(x, GROUND + bob + bound, z, lean, yaw, roll);
+    this.applyGait(Math.sin(stride), running);
+    // Once the front foot is down the legs hold a lunge: left leg braced forward, right leg trailing with the knee folded.
+    const stance = smooth(s.braceLead, s.braceLead + 0.08, tRel) * (1 - smooth(s.windUp * 0.7, s.windUp, tRel));
+    if (stance > 0.001 && this.bones) {
+      const b = this.bones;
+      if (b.thighL) b.thighL.rotation.x += 0.42 * stance;
+      if (b.calfL) b.calfL.rotation.x -= 0.12 * stance;
+      if (b.thighR) b.thighR.rotation.x -= 0.28 * stance;
+      if (b.calfR) b.calfR.rotation.x -= 0.55 * stance;
+    }
+    if (this.bones?.head) this.bones.head.rotation.x -= lean * GAIT.head; // eyes stay level, on the batsman
+  }
+
+  // Between deliveries he turns, jogs back to his mark and waits. The walk starts where the follow-through left him and quietly
+  // resets the gait, so the next run begins from exactly the same spot with no jump.
+  walkBack(dt) {
+    if (this.walk < 1) this.walk = Math.min(1, this.walk + dt / WALK_BACK);
+    const from = FIELD.bowlerZ + FOLLOW_M;
+    const e = smooth(0, 1, this.walk);
+    const z = from + (RUN_UP.startZ - from) * e;
+    const x = RUN_UP.startX * e;
+    if (this.walk >= 1) {
+      this.placeBowler(RUN_UP.startX, GROUND, RUN_UP.startZ, 0, 0);
+      return;
+    }
+    const stride = (Math.abs(z - from) / RUN_UP.strideM) * Math.PI * 2;
+    const amp = Math.sin(Math.PI * this.walk) * 0.55;
+    const bob = GAIT.bob * 0.7 * Math.abs(Math.sin(stride)) * amp;
+    const yaw = Math.PI * (smooth(0.01, 0.14, this.walk) - smooth(0.86, 1, this.walk));
+    this.placeBowler(x, GROUND + bob, z, 0.04, yaw);
+    this.applyGait(Math.sin(stride), amp);
   }
 
   // tRel: seconds relative to the moment the ball leaves the hand (negative before, positive after); null = standing.
-  // No run-up: the bowler stands at the crease and bowls one straight-arm windmill. The arm starts hanging down, swings back
-  // and up, passes just beyond vertical at release (where real bowlers let go), and follows through down past the front of
-  // the body to where it started. The swing eases in and out and is fastest at release, like a real action.
   setDelivery(tRel) {
     this.deliveryT = tRel;
+    this.gotDelivery = true;
   }
 
   update(dt) {
     if (this.mixer) this.mixer.update(dt);
+    if (!this.bowler) return;
+    const delivered = this.gotDelivery;
+    this.gotDelivery = false;
+    if (delivered) {
+      this.walk = 0;
+      if (this.deliveryT == null) {
+        this.walk = 1;
+        this.placeBowler(RUN_UP.startX, GROUND, RUN_UP.startZ, 0, 0);
+      } else {
+        this.runUp(this.deliveryT);
+      }
+    } else {
+      this.walkBack(dt);
+    }
     const t = this.deliveryT;
-    if (this.arm && t != null && t > ARM.start && t < ARM.end) {
+    if (delivered && this.arm && t != null && t > ARM.start && t < ARM.end) {
       const u = (t - ARM.start) / (ARM.end - ARM.start);
       const turn = u - Math.sin(2 * Math.PI * u) / (2 * Math.PI); // 0..1, zero speed at both ends
-      this.arm.rotation.x += 2 * Math.PI * turn; // back and up first, then over the top and down across the front
+      if (this.bones?.spine) this.bones.spine.rotation.y += 0.22 * Math.sin(Math.PI * u); // shoulders follow the arm
+      // Swing about the ground's lateral axis, not the arm bone's own tilted X: the arm then goes back, up over the top and
+      // down the front in the body's sagittal plane, and the hand reaches the release point instead of arcing off to the side.
+      this.root.getWorldQuaternion(this._qRoot);
+      this._axis.set(1, 0, 0).applyQuaternion(this._qRoot).normalize();
+      this.arm.getWorldQuaternion(this._qArm);
+      this._qSpin.setFromAxisAngle(this._axis, 2 * Math.PI * turn);
+      this._qArm.premultiply(this._qSpin);
+      this.arm.parent.getWorldQuaternion(this._qParent).invert();
+      this.arm.quaternion.copy(this._qParent.multiply(this._qArm));
     }
   }
 }

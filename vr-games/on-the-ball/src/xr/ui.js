@@ -5,7 +5,7 @@
 // look, because the glasses show no gaze cursor.
 
 import { Hovered, RayInteractable } from '@iwsdk/core';
-import { Card, dot, panelBase, paragraph, pill, roundButton, roundRect, symbol, text } from './cards.js';
+import { Card, dot, fit, panelBase, paragraph, pill, roundButton, roundRect, symbol, text } from './cards.js';
 import { COLORS, FONT, OUTCOME, SOURCE_LABEL } from './theme.js';
 import { paintTile } from './tile-art.js';
 import { PHASE } from '../core/flow.js';
@@ -20,7 +20,10 @@ const LAYOUT = {
   [PHASE.MODE]: ['modeInfo', 'btn:eye', 'btn:head', 'btn:back'],
   [PHASE.CALIBRATING]: ['calibInfo', 'btn:calcancel'],
   [PHASE.READY]: ['readyInfo', 'btn:start', 'btn:speed', 'btn:modeback', 'btn:guide'],
-  [PHASE.PLAYING]: ['hud', 'flash', 'btn:pause'],
+  // While a delivery is under way (run-in, release, flight) nothing but the pause button is on screen, so no text sits where the
+  // eyes follow the ball and nothing pulls the gaze off it. The pause button is a plain icon in the low corner, off the ball's path.
+  [PHASE.PLAYING]: ['btn:pause'],
+  // Once the ball has ended (tracked or missed): the result and the scoreboard strip. They go again when the next delivery begins.
   [PHASE.BETWEEN]: ['hud', 'flash', 'btn:pause'],
   [PHASE.PAUSED]: ['pauseInfo', 'btn:resume', 'btn:retry', 'btn:exit'],
   [PHASE.SCORECARD]: ['scoreMain', 'scoreRow1', 'scoreRow2', 'btn:retry2', 'btn:exit2'],
@@ -163,7 +166,7 @@ export class Ui {
     this.add('btn:guide', 0.7, 0.15, 0, -0.60, (c, w, h, f) => pill(c, 4, 4, w - 8, h - 8, 'Green guide ring: ' + (S()?.guide === false ? 'Off' : 'On'), f), { interactive: true });
     this.add('btn:modeback', 0.5, 0.15, 0.38, -0.40, (c, w, h, f) => pill(c, 4, 4, w - 8, h - 8, 'Change mode', f), { interactive: true });
 
-    // ---- heads-up strip while playing. It sits low (centre ~29 degrees down, top edge ~27), below the lowest point any ball
+    // ---- heads-up strip between deliveries (hidden while a ball is in play, see LAYOUT). It sits low (centre ~29 degrees down, top edge ~27), below the lowest point any ball
     // reaches (25 degrees down, PATH.arrivalFloorDeg in core/ball-path.js), so it never covers the pitch, the bowler or the ball.
     this.add('hud', 1.7, 0.15, -0.1, -1.2, (c, w, h) => {
       const s = S();
@@ -189,16 +192,18 @@ export class Ui {
     this.add('btn:pause', 0.17, 0.17, 0.86, -1.2, (c, w, h, f) => roundButton(c, w, h, 'pause', f), { interactive: true });
 
     // result of the ball that just finished: word + symbol + colour, and a plain reason when it was not scored
-    this.add('flash', 1.2, 0.16, 0, -0.74, (c, w, h) => {
+    this.add('flash', 1.25, 0.16, 0, -0.74, (c, w, h) => {
       const f = S()?.flash;
       if (!f) return;
       const o = OUTCOME[f.status] ?? OUTCOME.unscored;
       panelBase(c, w, h, { radius: h / 2, edge: o.color });
-      symbol(c, o.symbol, 56, h / 2, 26, o.color);
-      text(c, o.word, 100, h / 2, { size: 38, weight: 800, color: o.color });
+      symbol(c, o.symbol, 52, h / 2, 24, o.color);
+      const wordSize = fit(c, o.word, 320, 36, 800);
+      text(c, o.word, 92, h / 2, { size: wordSize, weight: 800, color: o.color });
       const why = f.status === 'green' && f.streak >= 2 ? f.streak + ' in a row' : REASON_NOTE[f.reason] ?? o.note;
       const note = f.status === 'unscored' ? o.note : why + ' · on ball ' + Math.round((f.coverage ?? 0) * 100) + '%';
-      text(c, note, w - 30, h / 2, { size: 28, weight: 500, color: COLORS.dim, align: 'right' });
+      const noteSize = fit(c, note, w - 92 - 330, 28, 500);
+      text(c, note, w - 30, h / 2, { size: noteSize, weight: 500, color: COLORS.dim, align: 'right' });
     });
 
     // ---- paused
@@ -238,14 +243,21 @@ export class Ui {
       c.lineWidth = 3;
       c.stroke();
       text(c, src.short + ' · ' + (s?.source === 'eye' ? 'calibrated' : s?.source === 'head' ? 'head mode' : 'emulator'), 376, 183, { size: 27, weight: 700, color: src.color, align: 'center' });
+      // hand play (baseball's mitt, football's gloves): a line of its own under the source chip, so the eye-tracking counts on the
+      // right stay the score. A sport can give its own wording in hand.line.
+      if (s?.hand && (s.hand.line || s.hand.pitches > 0)) {
+        const hd = s.hand;
+        const line = hd.line ?? `Mitt: ${hd.catches} of ${hd.pitches} caught · ${hd.strikes} strikes${hd.framed ? ' (' + hd.framed + ' framed)' : ''}`;
+        text(c, line, 176, 238, { size: fit(c, line, 450, 26, 700), weight: 700, color: COLORS.dim });
+      }
       // 20 dots in two rows of 10
       for (let i = 0; i < 20; i++) dot(c, 78 + (i % 10) * 64, 290 + Math.floor(i / 10) * 74, 24, s?.results?.[i] ?? null);
       // progress against the last session in the same mode (deck slide 8: older days sit under the card)
       const prev = (s?.history ?? []).find((r) => r.source === s?.source);
-      if ((s?.bestStreak ?? 0) >= 2) text(c, 'Best run: ' + s.bestStreak + ' green in a row', 50, h - 98, { size: 30, weight: 700, color: COLORS.green });
+      if ((s?.bestStreak ?? 0) >= 2) text(c, 'Best run: ' + s.bestStreak + ' in a row', 50, h - 98, { size: 30, weight: 700, color: COLORS.green });
       if (prev) {
         const d = cnt.green - prev.counts.green;
-        const msg = d > 0 ? `+${d} green on your last ${src.short.toLowerCase()} session` : d < 0 ? `${d} green on your last ${src.short.toLowerCase()} session` : `Same greens as your last ${src.short.toLowerCase()} session`;
+        const msg = d > 0 ? `+${d} on your last ${src.short.toLowerCase()} session` : d < 0 ? `${d} on your last ${src.short.toLowerCase()} session` : `Same as your last ${src.short.toLowerCase()} session`;
         text(c, msg, 50, h - 52, { size: 30, weight: 700, color: d > 0 ? COLORS.green : d < 0 ? COLORS.amber : COLORS.dim });
       }
       // divider + counts
@@ -253,16 +265,17 @@ export class Ui {
       c.fillRect(w - 440, 40, 2, h - 80);
       const rows = [
         [cnt.total, 'total', COLORS.white],
-        [cnt.green, 'green', COLORS.green],
-        [cnt.amber, 'amber', COLORS.amber],
-        [cnt.red, 'red', COLORS.red],
+        [cnt.green, 'good sight', COLORS.green],
+        [cnt.amber, 'average', COLORS.amber],
+        [cnt.red, 'lost eye contact', COLORS.red],
         [cnt.unscored, 'unscored', COLORS.unscored],
         [s?.minutes ?? 0, 'min', COLORS.white],
       ];
       rows.forEach(([n, label, col], i) => {
         const y = 62 + i * 78;
         text(c, String(n), w - 330, y, { size: 58, weight: 800, color: col, align: 'right' });
-        text(c, label, w - 305, y + 6, { size: 38, weight: 500, color: COLORS.dim });
+        const labelSize = fit(c, label, 300, 36, 500);
+        text(c, label, w - 305, y + 6, { size: labelSize, weight: 500, color: COLORS.dim });
       });
     });
     const row = (idx) => (c, w, h) => {
@@ -276,8 +289,8 @@ export class Ui {
       const src = SOURCE_LABEL[r.source] ?? SOURCE_LABEL.head;
       text(c, dayTime(r.ts), 36, h / 2, { size: 32, weight: 500, color: COLORS.dim });
       text(c, src.short, 420, h / 2, { size: 27, weight: 800, color: src.color });
-      text(c, 'green', w - 36, h / 2 + 2, { size: 32, weight: 500, color: COLORS.dim, align: 'right' });
-      text(c, String(r.counts.green), w - 140, h / 2, { size: 44, weight: 800, color: COLORS.green, align: 'right' });
+      text(c, 'good sight', w - 36, h / 2 + 2, { size: 28, weight: 500, color: COLORS.dim, align: 'right' });
+      text(c, String(r.counts.green), w - 210, h / 2, { size: 44, weight: 800, color: COLORS.green, align: 'right' });
     };
     this.add('scoreRow1', 1.7, 0.15, 0, -0.30, row(0));
     this.add('scoreRow2', 1.7, 0.15, 0, -0.47, row(1));
