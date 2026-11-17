@@ -26,8 +26,10 @@ import {
   updateHandMotion,
 } from './catching.js';
 import { CFG, RESTART_POS, RESTART_RADIUS } from './config.js';
+import { makeLabel } from './label.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
+import { EmulatorHands } from './emulator-hands.js';
 import { Effects, Sound } from './fx.js';
 import { trackedHands, useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
@@ -115,6 +117,14 @@ export class GameSystem extends createSystem({}) {
     this.lobbyMarker.position.set(RESTART_POS.x - 0.42, RESTART_POS.y, RESTART_POS.z);
     this.world.createTransformEntity(this.lobbyMarker);
 
+    // Name tags under the two pinch targets (they were bare orbs, so nothing said which one was which).
+    this.markerLabel = makeLabel('PLAY AGAIN');
+    this.markerLabel.position.set(RESTART_POS.x, RESTART_POS.y - 0.2, RESTART_POS.z);
+    this.world.createTransformEntity(this.markerLabel);
+    this.lobbyLabel = makeLabel('LOBBY', 0.24);
+    this.lobbyLabel.position.set(RESTART_POS.x - 0.42, RESTART_POS.y - 0.2, RESTART_POS.z);
+    this.world.createTransformEntity(this.lobbyLabel);
+
     window.addEventListener('keydown', (e) => {
       if (e.key === 'l' || e.key === 'L') {
         window.location.href = `${window.location.protocol}//${window.location.hostname}:8080`;
@@ -136,6 +146,10 @@ export class GameSystem extends createSystem({}) {
     this.desktop = new DesktopHand(this.world);
     this.cleanupFuncs.push(() => this.desktop.dispose());
 
+    // In the IWER emulator only (a headset has no IWER_DEVICE): plays the emulated hands like a fielder's.
+    this.emulatorHands = new EmulatorHands(this);
+    this.cleanupFuncs.push(() => this.emulatorHands.dispose());
+
     // Each hand as the catching rules see it (src/catching.js). The palm/normal arrays below alias its
     // vectors; they are what the tests and the HUD read.
     this.hands = { left: createHand('left'), right: createHand('right') };
@@ -153,6 +167,10 @@ export class GameSystem extends createSystem({}) {
       wrist: new Vector3(), middleProx: new Vector3(), indexMeta: new Vector3(), pinkyMeta: new Vector3(),
       indexProx: new Vector3(), pinkyProx: new Vector3(), thumbProx: new Vector3(),
       middleTip: new Vector3(), indexTip: new Vector3(), pinkyTip: new Vector3(), thumbTip: new Vector3(),
+      // The rest of each finger: its middle and distal joints, and the whole ring finger.
+      ringProx: new Vector3(), ringTip: new Vector3(), thumbDist: new Vector3(),
+      indexMid: new Vector3(), indexDist: new Vector3(), middleMid: new Vector3(), middleDist: new Vector3(),
+      ringMid: new Vector3(), ringDist: new Vector3(), pinkyMid: new Vector3(), pinkyDist: new Vector3(),
     };
     this.shoulders = { left: new Vector3(), right: new Vector3(), axis: new Vector3(1, 0, 0) };
     this.headQ = new Quaternion();
@@ -283,6 +301,7 @@ export class GameSystem extends createSystem({}) {
       get nearest() { return this.sys.nearest; },
       get lastResult() { return this.sys.lastResult; },
       get twoHanded() { return this.sys.twoHanded; },
+      get emulatorHands() { return this.sys.emulatorHands; },
       get cupType() { return this.sys.cupType; },
       get tutorial() { return !!this.sys.tut; },
       get tutorialStage() { return this.sys.tut ? this.sys.tut.stage : null; },
@@ -329,6 +348,8 @@ export class GameSystem extends createSystem({}) {
     this.eyeTracker.hide();
     this.marker.visible = false;
     this.lobbyMarker.visible = false;
+    this.markerLabel.visible = false;
+    this.lobbyLabel.visible = false;
     this.fx.clearTrail();
     this.hud.hideCard();
     this.hud.set({ score: 0, misses: 0, ballNo: 0, kmh: 0, focus: null });
@@ -660,6 +681,8 @@ export class GameSystem extends createSystem({}) {
     this.lockout = CFG.restartLockout;
     this.marker.visible = true;
     this.lobbyMarker.visible = true;
+    this.markerLabel.visible = true;
+    this.lobbyLabel.visible = true;
     const ratio = this.score / CFG.balls;
     const rating =
       ratio >= 0.95 ? 'Legendary hands!' : ratio >= 0.8 ? 'Safe hands!' : ratio >= 0.5 ? 'Good catching' : 'Keep practising';
@@ -700,20 +723,18 @@ export class GameSystem extends createSystem({}) {
     (inSession ? this.player.head : this.world.camera).getWorldPosition(this.head);
     (inSession ? this.player.head : this.world.camera).getWorldQuaternion(this.headQ);
 
-    this.desktop.update(this.player);
+    this.desktop.update(this.player, this, dt);
     if (this.desktop.active) {
-      const mode = this.desktop.handMode;
-      const both = mode === 'both';
+      // The mouse hands: the lead hand on the pointer, and the partner hand once it has come across
+      // to make a two-handed cup (a ball at the body, or 'both' mode). Contact stays a round volume.
       for (const side of ['left', 'right']) {
         const h = this.hands[side];
-        const used = both || mode === side || (mode !== 'left' && side === 'right');
-        if (!used) {
+        const p = this.desktop.palms[side];
+        if (!p) {
           invalidateHand(h);
           continue;
         }
-        this.tmp.copy(this.desktop.position);
-        if (both) this.tmp.x += side === 'left' ? -0.06 : 0.06;
-        setHandFromPoint(h, this.tmp);
+        setHandFromPoint(h, p);
       }
     } else {
       const J = this.J;
@@ -746,7 +767,20 @@ export class GameSystem extends createSystem({}) {
             indexTip: opt('index-finger-tip', J.indexTip),
             pinkyTip: opt('pinky-finger-tip', J.pinkyTip),
             thumbTip: opt('thumb-tip', J.thumbTip),
+            ringProx: opt('ring-finger-phalanx-proximal', J.ringProx),
+            ringTip: opt('ring-finger-tip', J.ringTip),
+            thumbDist: opt('thumb-phalanx-distal', J.thumbDist),
           };
+          // Each finger's middle and distal joints: the real bend of the finger. A finger the hand does
+          // not report all of is read as straight.
+          for (const f of ['index', 'middle', 'ring', 'pinky']) {
+            const mid = opt(`${f}-finger-phalanx-intermediate`, J[`${f}Mid`]);
+            const dist = opt(`${f}-finger-phalanx-distal`, J[`${f}Dist`]);
+            if (mid && dist) {
+              full[`${f}Mid`] = mid;
+              full[`${f}Dist`] = dist;
+            }
+          }
           ok = setHandFromJoints(h, full);
         }
         if (!ok) {
@@ -782,9 +816,11 @@ export class GameSystem extends createSystem({}) {
     if (this.paused) return;
     this.updateCrouch(dt);
     this.readPalms(dt);
+    this.emulatorHands.update(dt);
     const inHeadset = !!this.world.session;
     this.focus.sample(this.player, this.world.camera, inHeadset, dt);
     if (this.state === 'swinging' || this.state === 'flying') {
+      if (this.world?.renderer?.shadowMap) this.world.renderer.shadowMap.needsUpdate = true;
       this.eyeTracker.update(
         this.focus,
         this.ball.position,

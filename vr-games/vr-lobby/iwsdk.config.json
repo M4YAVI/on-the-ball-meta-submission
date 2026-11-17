@@ -55,7 +55,9 @@
   },
   "dev": {
     "emulator": {
-      "device": "metaQuestPro"
+      "device": "metaQuestPro",
+      "injectOnBuild": true,
+      "activation": "always"
     }
   }
 }

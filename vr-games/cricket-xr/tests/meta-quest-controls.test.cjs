@@ -126,9 +126,12 @@ const GAME_URL = process.env.GAME_URL || 'https://localhost:8081';
 
     // Look away (30 degrees up/left)
     lookAt(new V(-3.0, 4.0, -6.0));
-    s.focus.sample(s.player, s.world.camera, true);
-    s.focus.track(s.ball.position, 1 / 60, 6.0);
-    s.eyeTracker.update(s.focus, s.ball.position, s.focus.watching, true, s.world.camera, s.desktop, 1 / 60);
+    // Looking away only counts once it has lasted the game's grace period (one noisy frame does not flip it).
+    for (let i = 0; i < 90; i++) {
+      s.focus.sample(s.player, s.world.camera, true);
+      s.focus.track(s.ball.position, 1 / 60, 6.0);
+      s.eyeTracker.update(s.focus, s.ball.position, s.focus.watching, true, s.world.camera, s.desktop, 1 / 60);
+    }
 
     const lookedAway = s.focus.watching === false;
     const reticleMoved = s.eyeTracker.group.position.distanceTo(s.ball.position) > 1.5;

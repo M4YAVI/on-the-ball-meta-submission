@@ -22,12 +22,25 @@ export class VisorFrame {
     const { camera } = this.world;
     const W = window.innerWidth;
     const H = window.innerHeight;
-    const frameH = Math.min(H, (W * VIEW_H) / VIEW_W);
-    const metresHigh = (gridSize().h / GRID_SHARE) * (H / frameH); // what the whole window must span at the grid
-    camera.fov = 2 * Math.atan(metresHigh / 2 / CFG.grid.distance) * (180 / Math.PI);
-    camera.aspect = W / H;
-    camera.updateProjectionMatrix();
-    this.grid.placeOnDesktop((0.5 - GRID_CENTRE) * (frameH / H) * metresHigh);
+    const isPortrait = W < H;
+
+    if (isPortrait) {
+      const metresWide = gridSize().w / 0.88;
+      const metresHigh = metresWide * (H / W);
+      camera.fov = 2 * Math.atan(metresHigh / 2 / CFG.grid.distance) * (180 / Math.PI);
+      camera.aspect = W / H;
+      camera.updateProjectionMatrix();
+      this.grid.placeOnDesktop(0);
+      if (this.el) this.el.style.display = 'none';
+    } else {
+      const frameH = Math.min(H, (W * VIEW_H) / VIEW_W);
+      const metresHigh = (gridSize().h / GRID_SHARE) * (H / frameH);
+      camera.fov = 2 * Math.atan(metresHigh / 2 / CFG.grid.distance) * (180 / Math.PI);
+      camera.aspect = W / H;
+      camera.updateProjectionMatrix();
+      this.grid.placeOnDesktop((0.5 - GRID_CENTRE) * (frameH / H) * metresHigh);
+      if (this.el && !this.world.session) this.el.style.display = '';
+    }
   }
 
   setInHeadset(inHeadset) {

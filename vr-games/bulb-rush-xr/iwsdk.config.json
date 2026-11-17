@@ -23,7 +23,7 @@
     "render": {
       "fov": 70,
       "near": 0.05,
-      "far": 900,
+      "far": 150,
       "camera": {
         "position": [0, 1.3, 0.6],
         "lookAt": [0, 1.3, -1]
@@ -39,7 +39,9 @@
   },
   "dev": {
     "emulator": {
-      "device": "metaQuestPro"
+      "device": "metaQuestPro",
+      "injectOnBuild": true,
+      "activation": "always"
     }
   }
 }

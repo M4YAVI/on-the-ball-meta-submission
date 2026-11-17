@@ -20,6 +20,20 @@ const _m = new Matrix4();
 const _m0 = new Matrix4();
 const _x = new Vector3();
 
+// Should the synthetic hand bring its partner across to make a two-handed cup? A fielder takes a ball
+// coming at the body with both hands together (and keeps both round it once it is held); only a ball
+// wide of the body is a one-handed stretch. `straightReach`: how far either side of the head still
+// counts as "at the body".
+// g: { state, holding, twoHanded, wasPaired, isWide, aimX, headX }
+//   wasPaired: the hands were already together when the ball was caught (they stay round it).
+export function wantsBothHands(g, straightReach = 0.42) {
+  if (!g) return false;
+  if (g.holding) return !!(g.twoHanded || g.wasPaired);
+  if (g.state !== 'swinging' && g.state !== 'flying') return false;
+  if (g.isWide) return false;
+  return Math.abs(g.aimX - g.headX) < straightReach;
+}
+
 // 0..1: how close the ball is to arriving. A faster ball starts the hands' preparation earlier.
 export function proximityOf(dist, speed) {
   const window = 2.5 + 0.18 * speed;

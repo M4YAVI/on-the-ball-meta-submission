@@ -51,24 +51,32 @@ function saveBest(level, value) {
 }
 
 function label(text, width, height) {
+  // Drawn in 400 px/m units but held at 4x the pixels: these labels sit within ~1 m of the face, where 400 px/m
+  // gave only ~7 px/deg (a Quest shows ~20) and the words were soft.
+  const SS = 4;
+  const lw = Math.round(width * 400);
+  const lh = Math.round(height * 400);
   const c = document.createElement('canvas');
-  c.width = Math.round(width * 400);
-  c.height = Math.round(height * 400);
+  c.width = lw * SS;
+  c.height = lh * SS;
   const ctx = c.getContext('2d');
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
+  t.anisotropy = 8;
   const mesh = new Mesh(new PlaneGeometry(width, height), new MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: DoubleSide }));
   mesh.userData.draw = (value) => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
-    ctx.fillStyle = 'rgba(14,22,38,0.75)';
+    ctx.setTransform(SS, 0, 0, SS, 0, 0);
+    ctx.fillStyle = 'rgba(14,22,38,0.82)';
     ctx.beginPath();
-    ctx.roundRect(2, 2, c.width - 4, c.height - 4, 20);
+    ctx.roundRect(2, 2, lw - 4, lh - 4, 20);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.font = `600 ${Math.round(c.height * 0.42)}px system-ui, sans-serif`;
+    ctx.font = `700 ${Math.round(lh * 0.46)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(value, c.width / 2, c.height / 2, c.width * 0.92);
+    ctx.fillText(value, lw / 2, lh / 2, lw * 0.92);
     t.needsUpdate = true;
   };
   mesh.userData.draw(text);
@@ -864,7 +872,7 @@ export class GameSystem extends createSystem({}) {
         if (this.target && this.target.material) this.target.material.opacity = 0.75;
       }
     }
-    this.focus.sample(this.player, this.world.camera, inHeadset);
+    this.focus.sample(this.player, this.world.camera, inHeadset, dt);
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swapLockout > 0) this.swapLockout -= dt;

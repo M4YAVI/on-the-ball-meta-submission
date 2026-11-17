@@ -40,7 +40,7 @@
     "features": {
       "locomotion": false,
       "grabbing": false,
-      "physics": true,
+      "physics": false,
       "sceneUnderstanding": false,
       "environmentRaycast": false,
       "spatialUI": {
@@ -55,7 +55,9 @@
   },
   "dev": {
     "emulator": {
-      "device": "metaQuest3"
+      "device": "metaQuest3",
+      "injectOnBuild": true,
+      "activation": "always"
     }
   }
 }

@@ -19,10 +19,27 @@ import { CFG } from './config.js';
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
 
-// An eye-tracking ray this far off the head's forward line is certainly not a head ray.
+// Is the "gaze" ray really the eyes? (Reference: ON THE BALL src/core/gaze-verdict.js.)
+// Evidence only counts while the head is nearly still. A head ray that the runtime samples a few ms apart from the
+// head pose drifts off the head line while the head turns, which could otherwise pass as "eye movement".
+const HEAD_STILL_DEG_S = 10;
+// With the head still, an eye ray this far off the head's forward line is not a head ray...
 const SEPARATION_DEG = 2.5;
-// ...or it has wandered this much, in total, while the head frame stayed the reference.
-const EVIDENCE_DEG = 3;
+// ...or the eye ray has moved this far inside the head (range of directions, not a running total, so sensor noise
+// cannot add up to a false "eyes" over time).
+const SPREAD_DEG = 2;
+// Passive head-locked monitor, same numbers as ON THE BALL / @iwsdk/xr-input GAZE_VERDICT.
+export const VERDICT = Object.freeze({
+  UNKNOWN: 'unknown', // not enough evidence yet
+  NO_GAZE: 'no-gaze', // the runtime gave no gaze pose
+  EYE: 'eye-independent', // the gaze ray moved independently of the head
+  HEAD_LOCKED: 'head-locked', // the gaze ray matched the head ray the whole time
+});
+const LOCKED_IDENTICAL_DEG = 0.05;
+const LOCKED_RATIO = 0.95;
+const LOCKED_MAX_DEG = 0.1;
+const LOCKED_MIN_S = 3;
+const LOCKED_MIN_FRAMES = 90;
 // Gaze filter: heavy smoothing while fixating (kills jitter), almost none during a saccade (no lag).
 const FC_MIN = 3; // Hz while still
 const FC_BETA = 0.12; // extra Hz per degree/second
@@ -89,7 +106,9 @@ export class FocusTracker {
     this.haveRaw = false;
     this.haveFilt = false;
     this.havePrevHead = false;
-    this.evidence = 0;
+    this.spread = null; // { yMin, yMax, pMin, pMax } of the eye-in-head direction while the head was still
+    this.emulated = false; // the IWER desktop emulator is running: its "tracked" gaze is never real eyes
+    this.resetVerdict();
     this.glitch = 0;
     this.gap = 0; // seconds since the last eye sample
 
@@ -129,6 +148,61 @@ export class FocusTracker {
     return this.valid ? 'eyes' : 'eyes-lost';
   }
 
+  resetVerdict() {
+    this.verdict = VERDICT.UNKNOWN;
+    this.vFrames = 0;
+    this.vIdentical = 0;
+    this.vMaxDeg = 0;
+    this.vInvalid = 0;
+    this.vSeconds = 0;
+  }
+
+  // Passive monitor (ON THE BALL GazeVerdict): does the gaze ray ever leave the head ray?
+  // offDeg: angle between the gaze ray and the head's forward line this frame, or NaN with no gaze pose.
+  updateVerdict(offDeg, dt) {
+    if (this.eyeSeen) {
+      this.verdict = VERDICT.EYE;
+      return;
+    }
+    if (this.verdict === VERDICT.EYE) this.resetVerdict(); // eye confirmation was cleared: start the check again
+    if (!Number.isFinite(offDeg)) {
+      this.vInvalid++;
+      if (this.verdict === VERDICT.UNKNOWN && this.vFrames === 0 && this.vInvalid >= LOCKED_MIN_FRAMES) this.verdict = VERDICT.NO_GAZE;
+      return;
+    }
+    if (this.verdict === VERDICT.NO_GAZE) this.verdict = VERDICT.UNKNOWN;
+    this.vFrames++;
+    this.vSeconds += dt;
+    if (offDeg < LOCKED_IDENTICAL_DEG) this.vIdentical++;
+    if (offDeg > this.vMaxDeg) this.vMaxDeg = offDeg;
+    if (
+      this.vSeconds >= LOCKED_MIN_S &&
+      this.vFrames >= LOCKED_MIN_FRAMES &&
+      this.vIdentical / this.vFrames >= LOCKED_RATIO &&
+      this.vMaxDeg < LOCKED_MAX_DEG
+    ) {
+      this.verdict = VERDICT.HEAD_LOCKED;
+    }
+  }
+
+  // Head-still evidence that the eye ray moves on its own. local: eye direction in head space (unit).
+  eyeEvidence(local, offDeg) {
+    if (this.headSpeed > HEAD_STILL_DEG_S) return false;
+    if (offDeg > SEPARATION_DEG) return true;
+    const yawD = Math.atan2(local.x, -local.z) * RAD;
+    const pitchD = Math.asin(Math.max(-1, Math.min(1, local.y))) * RAD;
+    const s = this.spread;
+    if (!s) {
+      this.spread = { yMin: yawD, yMax: yawD, pMin: pitchD, pMax: pitchD };
+      return false;
+    }
+    s.yMin = Math.min(s.yMin, yawD);
+    s.yMax = Math.max(s.yMax, yawD);
+    s.pMin = Math.min(s.pMin, pitchD);
+    s.pMax = Math.max(s.pMax, pitchD);
+    return s.yMax - s.yMin > SPREAD_DEG || s.pMax - s.pMin > SPREAD_DEG;
+  }
+
   resetPitch() {
     this.watchTime = 0;
     this.flightTime = 0;
@@ -159,6 +233,7 @@ export class FocusTracker {
     }
     player.head.getWorldPosition(this.inHeadPos);
     player.head.getWorldQuaternion(this.inHeadQuat);
+    this.emulated = typeof window !== 'undefined' && window.IWER_DEVICE !== undefined; // never set on Quest Browser
     this.inEyeKind = 'none';
     if (player.gazeOrigin === 'tracked' && player.eyeSpace) {
       player.eyeSpace.getWorldPosition(this.inEyePos);
@@ -228,22 +303,23 @@ export class FocusTracker {
       if (haveEye) this.rawLocal.normalize();
     }
 
+    const tracked = haveEye && this.inEyeKind === 'tracked';
+    const offDeg = tracked ? Math.acos(Math.min(1, Math.max(-1, -this.rawLocal.z))) * RAD : NaN;
+
     if (haveEye) {
       this.gap = 0;
       this.holding = false;
       this.valid = true;
-      const simulated = this.inEyeKind === 'simulated';
+      // The emulator mouse, and any "tracked" gaze the emulator hands over, are labelled simulated: never real eyes.
+      const simulated = this.inEyeKind === 'simulated' || this.emulated;
       this.simulated = simulated;
+      this.lastEyeSimulated = simulated;
       // Is this independent eye data, or a head ray in disguise?
       if (!this.eyeSeen) {
-        if (simulated) {
-          this.eyeSeen = true;
-        } else {
-          if (this.haveRaw) this.evidence += angleBetween(this.rawLocal, this.prevRawLocal) * RAD;
-          const off = Math.acos(Math.min(1, Math.max(-1, -this.rawLocal.z))) * RAD;
-          if (off > SEPARATION_DEG || this.evidence > EVIDENCE_DEG) this.eyeSeen = true;
-        }
+        if (this.inEyeKind === 'simulated') this.eyeSeen = true;
+        else if (this.eyeEvidence(this.rawLocal, offDeg)) this.eyeSeen = true;
       }
+      if (tracked) this.updateVerdict(offDeg, dt);
       if (this.eyeSeen) {
         this.filterEye(dt);
         this.mode = 'eyes';
@@ -256,6 +332,8 @@ export class FocusTracker {
       this.haveRaw = true;
     } else if (this.eyeSeen && this.haveFilt) {
       // Eye data went missing after real eye tracking was confirmed: bridge a blink, then call it lost.
+      // It never silently becomes head tracking: the mode stays 'eyes' and lost time is not scored.
+      this.simulated = !!this.lastEyeSimulated; // keeps its label while the data is missing
       this.gap += dt;
       if (this.gap <= HOLD_S) {
         this.holding = true;
@@ -271,7 +349,8 @@ export class FocusTracker {
       return;
     }
 
-    // No eye data (and none ever confirmed): the head's direction stands in.
+    // No eye data (and none ever confirmed): the head's direction stands in, labelled as head.
+    if (!haveEye) this.updateVerdict(NaN, dt);
     this.mode = 'head';
     this.valid = true;
     this.holding = false;
@@ -385,5 +464,99 @@ export class FocusTracker {
   }
   get gazeDir() {
     return this.dir;
+  }
+}
+
+// ---------- calibration: "is this really your eyes?" ----------
+// Same check as ON THE BALL (src/core/gaze-verdict.js CalibrationCheck), same numbers. The player keeps the head still
+// and looks at each target in turn (e.g. a dot left, then a dot right). Only a gaze ray that moves independently of the
+// head can pass. Pure logic: it is fed directions and times, so it is unit tested; it draws nothing itself.
+// Passing it never proves the signal is hardware-real (the emulator can pass), so emulated input stays labelled simulated.
+export const CAL = Object.freeze({ IDLE: 'idle', RUNNING: 'running', PASSED: 'passed', FAILED: 'failed' });
+
+const angleDegV = (a, b) => {
+  if (!finiteVec(a) || !finiteVec(b)) return NaN;
+  const la = a.length();
+  const lb = b.length();
+  if (!(la > 1e-9 && lb > 1e-9)) return NaN;
+  return Math.acos(Math.min(1, Math.max(-1, a.dot(b) / (la * lb)))) * RAD;
+};
+
+export class CalibrationCheck {
+  // targets: [{ id, dir: Vector3 }] world-space directions, shown one after another.
+  constructor({ targets, dwellMs = 400, timeoutMs = 15000, aimTolDeg = 6, headDriftDeg = 4, minSeparationDeg = 6 }) {
+    if (!Array.isArray(targets) || targets.length === 0) throw new TypeError('CalibrationCheck needs targets');
+    this.targets = targets;
+    this.dwellMs = dwellMs;
+    this.timeoutMs = timeoutMs;
+    this.aimTolDeg = aimTolDeg;
+    this.headDriftDeg = headDriftDeg;
+    this.minSeparationDeg = minSeparationDeg;
+    this.status = CAL.IDLE;
+    this.targetIndex = 0;
+    this.reason = null;
+  }
+
+  start(tMs, headDir) {
+    this.status = CAL.RUNNING;
+    this.reason = null;
+    this.targetIndex = 0;
+    this.headBase = headDir.clone();
+    this._beginTarget(tMs);
+  }
+
+  _beginTarget(tMs) {
+    this.targetStart = tMs;
+    this.since = null;
+    this.blockers = { 'no-gaze': 0, 'off-target': 0, 'head-moved': 0, 'gaze-follows-head': 0 };
+  }
+
+  snapshot(progress = 0) {
+    return { status: this.status, targetIndex: this.targetIndex, progress, reason: this.reason };
+  }
+
+  // eyeDir / headDir: world-space directions. tracked: the runtime gave a gaze pose this frame.
+  sample(tMs, eyeDir, headDir, tracked) {
+    if (this.status !== CAL.RUNNING) return this.snapshot(this.status === CAL.PASSED ? 1 : 0);
+    if (!Number.isFinite(tMs)) return this.snapshot();
+    if (tMs - this.targetStart > this.timeoutMs) {
+      this.status = CAL.FAILED;
+      let worst = 'no-gaze';
+      let most = -1;
+      for (const [k, n] of Object.entries(this.blockers)) {
+        if (n > most) {
+          most = n;
+          worst = k;
+        }
+      }
+      this.reason = worst;
+      return this.snapshot();
+    }
+    const target = this.targets[this.targetIndex];
+    const aim = tracked ? angleDegV(eyeDir, target.dir) : NaN;
+    const drift = angleDegV(headDir, this.headBase);
+    const sep = tracked ? angleDegV(eyeDir, headDir) : NaN;
+    let blocked = null;
+    if (!tracked || !Number.isFinite(aim) || !Number.isFinite(sep)) blocked = 'no-gaze';
+    else if (!(aim <= this.aimTolDeg)) blocked = 'off-target';
+    else if (!(drift <= this.headDriftDeg)) blocked = 'head-moved';
+    else if (!(sep >= this.minSeparationDeg)) blocked = 'gaze-follows-head';
+    if (blocked) {
+      this.blockers[blocked]++;
+      this.since = null;
+      return this.snapshot();
+    }
+    if (this.since === null) this.since = tMs;
+    const progress = Math.min(1, (tMs - this.since) / this.dwellMs);
+    if (progress >= 1) {
+      this.targetIndex++;
+      if (this.targetIndex >= this.targets.length) {
+        this.status = CAL.PASSED;
+        return this.snapshot(1);
+      }
+      this._beginTarget(tMs);
+      return this.snapshot(0);
+    }
+    return this.snapshot(progress);
   }
 }

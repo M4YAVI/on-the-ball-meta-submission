@@ -8,9 +8,12 @@ import {
   Float32BufferAttribute,
   Group,
   HemisphereLight,
+  InstancedMesh,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
   PlaneGeometry,
+  Quaternion,
   RepeatWrapping,
   SRGBColorSpace,
   TorusGeometry,
@@ -269,6 +272,58 @@ function place(world, key, { angle, radius, height, width, rotY = 0 }) {
   add(world, holder);
 }
 
+// Batches repeated GLTF models into InstancedMesh instances to drop draw calls on mobile VR.
+function placeInstanced(world, key, items) {
+  if (!items || !items.length) return;
+  const gltf = AssetManager.getGLTF(key, { shared: true });
+  const proto = gltf?.scene;
+  if (!proto) return;
+
+  proto.position.set(0, 0, 0);
+  proto.rotation.set(0, 0, 0);
+  proto.scale.set(1, 1, 1);
+  proto.updateMatrixWorld(true);
+
+  box.setFromObject(proto);
+  box.getSize(size);
+  const baseOffsetY = -box.min.y;
+
+  const submeshes = [];
+  proto.traverse((child) => {
+    if (child.isMesh) {
+      submeshes.push({
+        geometry: child.geometry,
+        material: child.material,
+        matrix: child.matrixWorld.clone(),
+      });
+    }
+  });
+
+  const rootPos = new Vector3();
+  const rootQuat = new Quaternion();
+  const rootScale = new Vector3();
+  const rootMatrix = new Matrix4();
+  const offsetMatrix = new Matrix4().makeTranslation(0, baseOffsetY, 0);
+  const fullMatrix = new Matrix4();
+  const yAxis = new Vector3(0, 1, 0);
+
+  for (const sub of submeshes) {
+    const inst = new InstancedMesh(sub.geometry, sub.material, items.length);
+    for (let i = 0; i < items.length; i++) {
+      const { angle, radius, height, width, rotY = 0 } = items[i];
+      const scale = width ? width / size.x : height / size.y;
+      rootPos.set(Math.cos(angle) * radius, 0, FIELD_CENTER_Z + Math.sin(angle) * radius);
+      rootQuat.setFromAxisAngle(yAxis, rotY);
+      rootScale.set(scale, scale, scale);
+      rootMatrix.compose(rootPos, rootQuat, rootScale);
+      fullMatrix.copy(rootMatrix).multiply(offsetMatrix).multiply(sub.matrix);
+      inst.setMatrixAt(i, fullMatrix);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+    add(world, inst);
+  }
+}
+
 function buildScenery(world) {
   const rand = seeded(11);
 
@@ -276,47 +331,62 @@ function buildScenery(world) {
   const FENCE_RADIUS = 30;
   const panels = 44;
   const chord = 2 * FENCE_RADIUS * Math.sin(Math.PI / panels);
+  const fenceItems = [];
   for (let i = 0; i < panels; i++) {
     const angle = (i / panels) * Math.PI * 2;
-    place(world, 'fence', {
+    fenceItems.push({
       angle,
       radius: FENCE_RADIUS,
       width: chord * 1.02,
       rotY: Math.atan2(-Math.cos(angle), -Math.sin(angle)),
     });
   }
+  placeInstanced(world, 'fence', fenceItems);
 
   // Hedge of bushes just outside the fence.
+  const bushGroups = { bush: [], 'bush-large': [] };
   for (let i = 0; i < 46; i++) {
-    place(world, rand() < 0.5 ? 'bush' : 'bush-large', {
+    const key = rand() < 0.5 ? 'bush' : 'bush-large';
+    bushGroups[key].push({
       angle: (i / 46) * Math.PI * 2 + rand() * 0.05,
       radius: 32 + rand() * 2.5,
       height: 1.2 + rand() * 1.1,
       rotY: rand() * Math.PI * 2,
     });
   }
+  placeInstanced(world, 'bush', bushGroups.bush);
+  placeInstanced(world, 'bush-large', bushGroups['bush-large']);
 
   // Tree line behind that.
   const trees = ['tree-oak', 'tree-pine', 'tree-pine-tall', 'tree-fat'];
+  const treeGroups = { 'tree-oak': [], 'tree-pine': [], 'tree-pine-tall': [], 'tree-fat': [] };
   for (let i = 0; i < 70; i++) {
-    place(world, trees[Math.floor(rand() * trees.length)], {
+    const key = trees[Math.floor(rand() * trees.length)];
+    treeGroups[key].push({
       angle: (i / 70) * Math.PI * 2 + rand() * 0.08,
       radius: 37 + rand() * 12,
       height: 7 + rand() * 6,
       rotY: rand() * Math.PI * 2,
     });
   }
+  for (const k of trees) {
+    placeInstanced(world, k, treeGroups[k]);
+  }
 
   // A pavilion tent and a few rocks for landmarks.
   place(world, 'tent', { angle: -0.9, radius: 34.5, height: 4.5, rotY: 0.6 });
+  const rockGroups = { 'rock-large': [], 'rock-small': [] };
   for (let i = 0; i < 9; i++) {
-    place(world, rand() < 0.5 ? 'rock-large' : 'rock-small', {
+    const key = rand() < 0.5 ? 'rock-large' : 'rock-small';
+    rockGroups[key].push({
       angle: rand() * Math.PI * 2,
       radius: 33.5 + rand() * 3,
       height: 0.6 + rand() * 1.2,
       rotY: rand() * Math.PI * 2,
     });
   }
+  placeInstanced(world, 'rock-large', rockGroups['rock-large']);
+  placeInstanced(world, 'rock-small', rockGroups['rock-small']);
 }
 
 export function buildStadium(world) {

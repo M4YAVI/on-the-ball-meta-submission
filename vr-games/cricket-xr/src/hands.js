@@ -44,20 +44,41 @@ skin.onBeforeCompile = (shader) => {
 };
 
 export const trackedHands = { left: null, right: null };
+// Every joint of the WebXR hand the catching code can use: the real positions of each finger's bones,
+// so a curled finger is read as it is and not guessed from the knuckle and the tip.
 const JOINTS = [
   'wrist',
-  'middle-finger-phalanx-proximal',
-  'middle-finger-phalanx-intermediate',
-  'middle-finger-tip',
-  'index-finger-metacarpal',
-  'index-finger-phalanx-proximal',
-  'index-finger-tip',
-  'pinky-finger-metacarpal',
-  'pinky-finger-tip',
   'thumb-metacarpal',
+  'thumb-phalanx-proximal',
   'thumb-phalanx-distal',
   'thumb-tip',
+  ...['index', 'middle', 'ring', 'pinky'].flatMap((f) => [
+    `${f}-finger-metacarpal`,
+    `${f}-finger-phalanx-proximal`,
+    `${f}-finger-phalanx-intermediate`,
+    `${f}-finger-phalanx-distal`,
+    `${f}-finger-tip`,
+  ]),
 ];
+
+// Every mesh drawn with `skin` needs this per-vertex distance from the wrist: without it the shader
+// reads 0 everywhere and discards the whole hand. Used by the tracked hands and the mouse hands.
+export function addWristFade(model, mesh) {
+  const wrist = model.getObjectByName('wrist');
+  const geometry = mesh && mesh.geometry;
+  if (!wrist || !geometry || !geometry.attributes.position || geometry.attributes.wristDist) return;
+  const wristPos = wrist.position;
+  const pos = geometry.attributes.position;
+  const count = pos.count;
+  const distances = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const dx = pos.getX(i) - wristPos.x;
+    const dy = pos.getY(i) - wristPos.y;
+    const dz = pos.getZ(i) - wristPos.z;
+    distances[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  geometry.setAttribute('wristDist', new BufferAttribute(distances, 1));
+}
 
 function handClass(side) {
   class SkinHand extends AnimatedHand {
@@ -66,21 +87,7 @@ function handClass(side) {
       if (mesh) {
         mesh.frustumCulled = false;
         mesh.material = skin;
-        const wrist = this.model.getObjectByName('wrist');
-        const geometry = mesh.geometry;
-        if (wrist && geometry && geometry.attributes.position) {
-          const wristPos = wrist.position;
-          const pos = geometry.attributes.position;
-          const count = pos.count;
-          const distances = new Float32Array(count);
-          for (let i = 0; i < count; i++) {
-            const dx = pos.getX(i) - wristPos.x;
-            const dy = pos.getY(i) - wristPos.y;
-            const dz = pos.getZ(i) - wristPos.z;
-            distances[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          }
-          geometry.setAttribute('wristDist', new BufferAttribute(distances, 1));
-        }
+        addWristFade(this.model, mesh);
       }
       const joints = {};
       for (const name of JOINTS) joints[name] = this.model.getObjectByName(name) || null;

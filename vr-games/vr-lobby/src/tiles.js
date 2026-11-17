@@ -75,28 +75,29 @@ class SportTile {
     this.mesh.add(this.label);
   }
 
-  // The tiles carry no text at rest. The name fades in on the one you are looking at.
+  // Every tile always shows its name (two tiles are both a red ball, so a bare picture is ambiguous). The name brightens
+  // and gains the best score on the one you are looking at.
   buildLabel(renderer) {
     const best = bestText(this.game);
     const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 200;
+    canvas.width = 1280; // 2x the old size: the name is read from ~1.7 m, so it needs the pixels
+    canvas.height = 400;
     const g = canvas.getContext('2d');
     const right = this.layout.labelSide === 'right';
     g.textAlign = right ? 'right' : 'left';
     g.textBaseline = 'alphabetic';
-    const x = right ? canvas.width - 8 : 8;
+    const x = right ? canvas.width - 16 : 16;
     g.shadowColor = 'rgba(0,0,0,0.85)';
-    g.shadowBlur = 16;
+    g.shadowBlur = 32;
     g.fillStyle = '#ffffff';
-    g.font = `600 60px ${FONT}`;
-    g.fillText(this.game.title, x, best ? 122 : 186);
+    g.font = `700 124px ${FONT}`;
+    g.fillText(this.game.title, x, best ? 244 : 372, canvas.width - 40);
     if (best) {
       g.fillStyle = '#d4d8d6';
-      g.font = `500 46px ${FONT}`;
-      g.fillText(best, x, 186);
+      g.font = `600 100px ${FONT}`;
+      g.fillText(best, x, 372, canvas.width - 40);
     }
-    const w = 0.24;
+    const w = 0.40;
     const h = (w * canvas.height) / canvas.width;
     const inset = 0.016;
     this.labelMaterial = new MeshBasicMaterial({
@@ -126,7 +127,7 @@ class SportTile {
     this.mesh.position.z = 0.006 * k;
     const target = this.dimmed ? DIM_COLOR : REST_COLOR;
     this.material.color.copy(target).lerp(FOCUS_COLOR, this.dimmed ? 0 : k);
-    this.labelMaterial.opacity = this.dimmed ? 0 : k;
+    this.labelMaterial.opacity = this.dimmed ? 0 : 0.88 + 0.12 * k;
   }
 }
 

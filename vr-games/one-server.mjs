@@ -8,6 +8,10 @@
 //   https://<this-PC>:8443/cricket/   Cricket Catch
 //   https://<this-PC>:8443/baseball/  Glove Up
 //   https://<this-PC>:8443/bulb/      Bulb Rush
+//   https://<this-PC>:8443/ontheball/ ON THE BALL (its own app, source in on-the-ball)
+//   https://<this-PC>:8443/ontheball/football/ ON THE BALL football (source in on-the-ball/football)
+//   https://<this-PC>:8443/ontheball/tennis/   ON THE BALL tennis (source in on-the-ball/tennis)
+//   https://<this-PC>:8443/ontheball/baseball/ ON THE BALL baseball (source in on-the-ball/baseball)
 //
 // No game source is changed. Each app is built with its own vite.config.js and its own node_modules,
 // and the four builds are copied into hub/ the same way .github/workflows/pages.yml does it.
@@ -34,6 +38,10 @@ const APPS = [
   { name: 'Cricket Catch', dir: 'cricket-xr', mount: 'cricket' },
   { name: 'Glove Up (Baseball)', dir: 'baseball-xr', mount: 'baseball' },
   { name: 'Bulb Rush', dir: 'bulb-rush-xr', mount: 'bulb' },
+  { name: 'ON THE BALL', dir: 'on-the-ball', mount: 'ontheball' }, // ON THE BALL lives in vr-games/on-the-ball
+  { name: 'ON THE BALL Football', dir: 'on-the-ball/football', mount: 'ontheball/football', sharedModules: 'on-the-ball' }, // a sub-project of ON THE BALL: no node_modules of its own
+  { name: 'ON THE BALL Tennis', dir: 'on-the-ball/tennis', mount: 'ontheball/tennis', sharedModules: 'on-the-ball' }, // same: a sub-project that shares ON THE BALL's modules
+  { name: 'ON THE BALL Baseball', dir: 'on-the-ball/baseball', mount: 'ontheball/baseball', sharedModules: 'on-the-ball' }, // same again (the catcher's view; the batsman's view stays cricket's)
 ];
 
 // The HTTPS certificate the IWSDK dev plugin already made. It holds the cert and key together, as the plugin writes it.
@@ -41,7 +49,7 @@ const CERT = path.join(ROOT, 'vr-lobby', '.iwsdk', 'https', '_cert.pem');
 
 function buildApp(app) {
   const cwd = path.join(ROOT, app.dir);
-  const viteBin = path.join(cwd, 'node_modules', 'vite', 'bin', 'vite.js');
+  const viteBin = path.join(path.join(ROOT, app.sharedModules ?? app.dir), 'node_modules', 'vite', 'bin', 'vite.js');
   if (!fs.existsSync(viteBin)) {
     throw new Error(`${app.name}: dependencies are missing. Run "npm install" in ${app.dir}.`);
   }
@@ -70,6 +78,10 @@ const DEV_LINKS = [
   ['https://localhost:8081', '/cricket'],
   ['https://localhost:8082', '/baseball'],
   ['https://localhost:8083', '/bulb'],
+  ['https://localhost:8084', '/ontheball'],
+  ['https://localhost:8085', '/ontheball/football'],
+  ['https://localhost:8086', '/ontheball/tennis'],
+  ['https://localhost:8087', '/ontheball/baseball'],
 ];
 
 function rewriteDevLinks(dir) {
@@ -186,6 +198,10 @@ function startServer() {
     console.log(`  Cricket Catch     https://localhost:${PORT}/cricket/`);
     console.log(`  Glove Up          https://localhost:${PORT}/baseball/`);
     console.log(`  Bulb Rush         https://localhost:${PORT}/bulb/`);
+    console.log(`  ON THE BALL       https://localhost:${PORT}/ontheball/`);
+    console.log(`  ON THE BALL Football  https://localhost:${PORT}/ontheball/football/`);
+    console.log(`  ON THE BALL Tennis    https://localhost:${PORT}/ontheball/tennis/`);
+    console.log(`  ON THE BALL Baseball  https://localhost:${PORT}/ontheball/baseball/`);
     for (const ip of lanAddresses()) {
       console.log(`  On a Quest, use   https://${ip}:${PORT}/`);
     }

@@ -7,8 +7,10 @@ import {
   commitHand,
   createDecision,
   createHand,
+  createContact,
   deflectVelocity,
   evaluateCatch,
+  evaluateHand,
   setHandFromJoints,
   setHandFromPose,
   setHandFromPoint,
@@ -434,4 +436,118 @@ test('reaching across the body with the wrong hand is a stretch; the same spot w
   assert.ok(across.tags.includes('stretch'), `tags ${across.tags}`);
   const near = run({ right: chest(0.35), ball: { x: 0.35, speed: 10 } });
   assert.ok(!near.tags.includes('stretch'), `tags ${near.tags}`);
+});
+
+
+// ---------- finger joints: each finger is its real bones ----------
+
+// A right hand facing -z with the fingers up (+y), joints given for a tight cup: the middle finger's
+// knuckle -> middle joint -> distal joint -> tip curls forward, so a straight knuckle-to-tip stick would
+// cut across the hollow of the curl.
+function curledHand() {
+  const j = joints('right');
+  j.middleMid = V([0, 1.33, -0.4]);
+  j.middleDist = V([0, 1.4, -0.46]); // the finger has hooked forward (towards -z) ...
+  j.middleTip = V([0, 1.33, -0.56]); // ... and the tip has come back down
+  return j;
+}
+
+test('a hand read from joints is every finger bone: forearm, palm, 4 fingers x 3 bones, thumb x 2', () => {
+  const h = createHand('right');
+  assert.ok(setHandFromJoints(h, joints('right')));
+  assert.equal(h.capCount, 16);
+  assert.equal(h.caps.filter((c) => c.kind === 'finger').length, 12);
+  assert.equal(h.caps.filter((c) => c.kind === 'thumb').length, 2);
+  // A bare point (a controller) stays one round volume.
+  setHandFromPoint(h, V([0, 1.2, -0.4]));
+  assert.equal(h.capCount, 1);
+});
+
+test('a curled finger is modelled as its real bones, not a straight stick from knuckle to tip', () => {
+  const h = createHand('right');
+  assert.ok(setHandFromJoints(h, curledHand()));
+  // The distal joint is the point on the bend, well away from the straight knuckle -> tip line.
+  const bend = V([0, 1.4, -0.46]);
+  const ballR = 0.01;
+  const stick = [h.knuckles.middle, h.tips.middle];
+  const toStick = (() => {
+    const a = stick[0];
+    const b = stick[1];
+    const ab = b.clone().sub(a);
+    const t = Math.max(0, Math.min(1, bend.clone().sub(a).dot(ab) / ab.lengthSq()));
+    return bend.distanceTo(a.clone().addScaledVector(ab, t));
+  })();
+  assert.ok(toStick > ballR + CFG.fingerRadius, `the bend is ${toStick.toFixed(3)} m from the straight line, more than a ball can touch`);
+  // A ball dropping onto the bend meets the finger.
+  const c = createContact();
+  const from = bend.clone().add(V([0, 0.2, 0]));
+  evaluateHand(h, from, bend.clone(), V([0, -5, 0]), ballR, 0, c);
+  assert.equal(c.hit, true);
+  assert.equal(c.kind, 'finger');
+});
+
+test('a hand read from joints with no middle or distal joints still reads each finger as a straight line', () => {
+  const h = createHand('right');
+  assert.ok(setHandFromJoints(h, joints('right')));
+  // The middle joint sits a third of the way along each finger.
+  const k = h.knuckles.index;
+  const t = h.tips.index;
+  const mid = k.clone().lerp(t, 1 / 3);
+  assert.ok(h.mids.index.distanceTo(mid) < 1e-9);
+});
+
+test('the ring finger is part of the hand: a ball on the ring fingertip touches the hand', () => {
+  const h = createHand('right');
+  const j = joints('right');
+  j.ringProx = V([0.015, 1.245, -0.4]);
+  j.ringTip = V([0.015, 1.5, -0.4]); // a long ring finger, well beyond the other fingers
+  assert.ok(setHandFromJoints(h, j));
+  const tip = V([0.015, 1.5, -0.4]);
+  const c = createContact();
+  evaluateHand(h, tip.clone().add(V([0, 0, -0.3])), tip.clone().add(V([0, 0, 0.0])), V([0, 0, 8]), 0.03, 0, c);
+  assert.equal(c.hit, true, 'the ring fingertip is touched');
+  assert.equal(c.kind, 'finger');
+});
+
+test('every joint the hand reports is used: a pose-built hand has its finger bones too', () => {
+  const h = createHand('left');
+  setHandFromPose(h, V([0, 1.2, -0.6]), V(FWD), V(UP), 0.2); // a closed hand: fingers curl towards the palm
+  assert.equal(h.capCount, 16);
+  // The curl is in the bones: the middle joint is not on the line from knuckle to tip.
+  const k = h.knuckles.ring;
+  const t = h.tips.ring;
+  const ab = t.clone().sub(k);
+  const m = h.mids.ring.clone().sub(k);
+  const off = m.clone().addScaledVector(ab, -m.dot(ab) / ab.lengthSq()).length();
+  assert.ok(off > 0.005, `the ring finger's bend is ${off.toFixed(3)} m off the straight line`);
+});
+
+// ---------- two cupped hands: a first touch a frame before the other hand's is still a two-handed catch ----------
+
+test('cupped hands side by side: a ball off-centre by a few cm is two-handed whichever frame it first touches a hand', () => {
+  const dec = createDecision();
+  let twoHanded = 0;
+  let total = 0;
+  // Slide where the frame boundaries fall (phase) and how far off-centre the ball is.
+  for (let off = -0.03; off <= 0.0301; off += 0.01) {
+    for (let phase = 0; phase < 0.23; phase += 0.01) {
+      const L = createHand('left');
+      const R = createHand('right');
+      setHandFromPose(L, V([-0.045, 1.1, -0.6]), V([0.13, 0.74, -0.66]), V([0.14, -0.67, -0.72]), 0.7);
+      setHandFromPose(R, V([0.045, 1.1, -0.6]), V([-0.13, 0.74, -0.66]), V([-0.14, -0.67, -0.72]), 0.7);
+      const prev = new Vector3();
+      const pos = new Vector3(off, 1.14, -3 - phase);
+      let outcome = 'none';
+      for (let i = 0; i < 60 && outcome === 'none'; i++) {
+        prev.copy(pos);
+        pos.z += 0.22; // 13 m/s at 60 fps
+        evaluateCatch(L, R, prev, pos, V([0, 0, 13]), 0.05, SHOULDERS, dec);
+        outcome = dec.outcome;
+      }
+      assert.equal(outcome, 'catch', `off ${off.toFixed(2)} phase ${phase.toFixed(2)}`);
+      total++;
+      if (dec.twoHand) twoHanded++;
+    }
+  }
+  assert.equal(twoHanded, total, `${twoHanded} of ${total} were two-handed`);
 });

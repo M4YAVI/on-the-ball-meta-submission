@@ -17,14 +17,20 @@ function seenBefore() {
   }
 }
 
+export function isTouchDevice() {
+  if (typeof window === 'undefined') return false;
+  return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+}
+
 export const GUIDE_TEXT = {
   desktop: 'Point at a sport. Click.',
+  touch: 'Tap a sport to launch.',
   look: 'Look at a sport.',
   pinch: 'Pinch. That is the tap.',
 };
 
-export function guideStep(inXR, hasFocus) {
-  if (!inXR) return 'desktop';
+export function guideStep(inXR, hasFocus, isTouch = isTouchDevice()) {
+  if (!inXR) return isTouch ? 'touch' : 'desktop';
   return hasFocus ? 'pinch' : 'look';
 }
 
@@ -33,11 +39,12 @@ export class LobbyGuide {
     this.active = !seenBefore();
     this.step = null;
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 1024;
-    this.canvas.height = 96;
+    this.canvas.width = 2048; // 2x: read from ~1.7 m in a headset
+    this.canvas.height = 192;
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
-    const w = 0.62;
+    this.texture.anisotropy = 8;
+    const w = 0.70;
     const h = (w * this.canvas.height) / this.canvas.width;
     this.panel = new Mesh(
       new PlaneGeometry(w, h),
@@ -53,7 +60,7 @@ export class LobbyGuide {
     const g = canvas.getContext('2d');
     g.clearRect(0, 0, canvas.width, canvas.height);
     g.fillStyle = '#ffffff';
-    g.font = '600 58px "Segoe UI", system-ui, -apple-system, sans-serif';
+    g.font = '700 124px "Segoe UI", system-ui, -apple-system, sans-serif';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.fillText(text, canvas.width / 2, canvas.height / 2);

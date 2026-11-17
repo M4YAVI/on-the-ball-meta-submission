@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Euler, Quaternion, Vector3 } from '@iwsdk/core';
-import { FocusTracker } from '../src/gaze.js';
+import { CAL, CalibrationCheck, FocusTracker, VERDICT } from '../src/gaze.js';
 import { CFG } from '../src/config.js';
 
 const DT = 1 / 72;
@@ -411,4 +411,128 @@ test('close ball: a big ball near the face is easier to keep on than the same an
   }
   assert.equal(near.watching, true);
   assert.equal(far.watching, false);
+});
+
+// ---------- false detection, head-locked rays, emulator labels, dropouts, calibration ----------
+// Reference behaviour: ON THE BALL src/core/gaze-verdict.js.
+
+test('a head ray that lags the head pose by a frame while the head turns fast is never taken for eyes', () => {
+  const t = tracker();
+  let prev = yaw(0);
+  for (let i = 0; i < 300; i++) {
+    const q = yaw(Math.sin(i / 8) * 40); // fast head sweeps, up to ~360 deg/s
+    t.feed(DT, HEAD, q, { quat: prev.clone(), pos: HEAD }); // "gaze" is last frame's head pose (timing skew)
+    prev = q;
+  }
+  assert.equal(t.eyeSeen, false);
+  assert.equal(t.mode, 'head');
+  assert.equal(t.realEyes, false);
+});
+
+test('small sensor noise on a head ray cannot add up to a false "eyes" over time', () => {
+  const noise = rng(5);
+  const t = tracker();
+  const head = yaw(0);
+  for (let i = 0; i < 3000; i++) {
+    const d = FWD.clone().add(new Vector3(noise() * 0.01, noise() * 0.01, 0)).normalize(); // about +/-0.3 deg
+    t.feed(DT, HEAD, head, { quat: new Quaternion().setFromUnitVectors(FWD, d), pos: HEAD });
+  }
+  assert.equal(t.eyeSeen, false);
+  assert.equal(t.mode, 'head');
+});
+
+test('verdict: a gaze ray identical to the head for 3 s is reported head-locked and stays head tracking', () => {
+  const t = tracker();
+  for (let i = 0; i < 240; i++) {
+    const q = yaw(Math.sin(i / 30) * 10);
+    t.feed(DT, HEAD, q, { quat: q.clone(), pos: HEAD });
+  }
+  assert.equal(t.verdict, VERDICT.HEAD_LOCKED);
+  assert.equal(t.mode, 'head');
+  assert.equal(t.source, 'head');
+});
+
+test('verdict: no gaze pose at all is reported no-gaze; independent eyes are reported eye-independent', () => {
+  const none = tracker();
+  for (let i = 0; i < 100; i++) none.feed(DT, HEAD, yaw(0), null);
+  assert.equal(none.verdict, VERDICT.NO_GAZE);
+  const eyes = tracker();
+  for (let i = 0; i < 20; i++) eyes.feed(DT, HEAD, yaw(0), { quat: yaw(i < 10 ? 0 : 8), pos: HEAD });
+  assert.equal(eyes.verdict, VERDICT.EYE);
+});
+
+test('in the emulator a "tracked" gaze ray is labelled simulated, never real eye tracking, even while it drops out', () => {
+  const t = tracker();
+  t.emulated = true; // what sample() sets when window.IWER_DEVICE exists (never on Quest Browser)
+  for (let i = 0; i < 20; i++) t.feed(DT, HEAD, yaw(0), { quat: yaw(i < 10 ? 0 : 8), pos: HEAD });
+  assert.equal(t.mode, 'eyes');
+  assert.equal(t.simulated, true);
+  assert.equal(t.realEyes, false);
+  assert.equal(t.source, 'simulated-eyes');
+  for (let i = 0; i < 30; i++) t.feed(DT, HEAD, yaw(0), null);
+  assert.equal(t.simulated, true, 'the label survives a dropout');
+  assert.equal(t.realEyes, false);
+});
+
+test('a long eye-data dropout never silently becomes head tracking', () => {
+  const t = tracker();
+  const head = yaw(0);
+  const toBall = BALL.clone().sub(HEAD).normalize();
+  prime(t, head, toBall);
+  assert.equal(t.realEyes, true);
+  t.resetPitch();
+  for (let i = 0; i < 144; i++) frame(t, head, null); // 2 s without eye data, head pointing at the ball
+  assert.equal(t.mode, 'eyes', 'still eye mode, not head');
+  assert.equal(t.source, 'eyes-lost');
+  assert.equal(t.valid, false);
+  // Only the 0.15 s blink bridge (last eye direction) is counted; after that the head is never credited as the eyes.
+  assert.ok(t.watchTime <= 0.16, `watch time ${t.watchTime.toFixed(3)} s`);
+  assert.equal(t.focus, null, 'no made-up score');
+});
+
+const calTargets = () => [
+  { id: 'left', dir: new Vector3(-Math.sin(15 * DEG), 0, -Math.cos(15 * DEG)) },
+  { id: 'right', dir: new Vector3(Math.sin(15 * DEG), 0, -Math.cos(15 * DEG)) },
+];
+
+test('calibration: head still and eyes on each dot passes', () => {
+  const cal = new CalibrationCheck({ targets: calTargets() });
+  cal.start(0, FWD.clone());
+  let snap;
+  let ms = 0;
+  for (const tg of cal.targets) {
+    for (let i = 0; i < 40; i++) snap = cal.sample((ms += 1000 / 72), tg.dir, FWD, true);
+  }
+  assert.equal(snap.status, CAL.PASSED);
+});
+
+test('calibration: a gaze ray that follows the head to the dots fails as gaze-follows-head', () => {
+  const cal = new CalibrationCheck({ targets: calTargets(), timeoutMs: 1000, headDriftDeg: 30 });
+  cal.start(0, FWD.clone());
+  let snap;
+  for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = cal.sample(ms, cal.targets[0].dir, cal.targets[0].dir, true);
+  assert.equal(snap.status, CAL.FAILED);
+  assert.equal(snap.reason, 'gaze-follows-head');
+});
+
+test('calibration: turning the head to the dot fails as head-moved; no gaze data fails as no-gaze', () => {
+  const moved = new CalibrationCheck({ targets: calTargets(), timeoutMs: 1000 });
+  moved.start(0, FWD.clone());
+  let snap;
+  const halfway = new Vector3(-Math.sin(8 * DEG), 0, -Math.cos(8 * DEG));
+  for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = moved.sample(ms, moved.targets[0].dir, halfway, true);
+  assert.equal(snap.reason, 'head-moved');
+  const none = new CalibrationCheck({ targets: calTargets(), timeoutMs: 1000 });
+  none.start(0, FWD.clone());
+  for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = none.sample(ms, null, FWD, false);
+  assert.equal(snap.status, CAL.FAILED);
+  assert.equal(snap.reason, 'no-gaze');
+});
+
+test('calibration: NaN inputs never pass and never throw', () => {
+  const cal = new CalibrationCheck({ targets: calTargets(), timeoutMs: 500 });
+  cal.start(0, FWD.clone());
+  let snap;
+  for (let ms = 0; ms <= 600; ms += 1000 / 72) snap = cal.sample(ms, new Vector3(NaN, 0, -1), FWD, true);
+  assert.equal(snap.status, CAL.FAILED);
 });

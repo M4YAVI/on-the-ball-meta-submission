@@ -11,51 +11,51 @@
       "type": "hit"
     },
     {
-      "frame": 81,
+      "frame": 80,
       "type": "caught"
     },
     {
-      "frame": 133,
+      "frame": 132,
       "type": "hit"
     },
     {
-      "frame": 160,
+      "frame": 158,
       "type": "missed"
     },
     {
-      "frame": 212,
+      "frame": 210,
       "type": "hit"
     },
     {
-      "frame": 254,
+      "frame": 252,
       "type": "caught"
     },
     {
-      "frame": 306,
+      "frame": 304,
       "type": "hit"
     },
     {
-      "frame": 330,
+      "frame": 328,
       "type": "caught"
     },
     {
-      "frame": 382,
+      "frame": 380,
       "type": "hit"
     },
     {
-      "frame": 424,
+      "frame": 403,
       "type": "caught"
     },
     {
-      "frame": 476,
+      "frame": 455,
       "type": "hit"
     },
     {
-      "frame": 498,
+      "frame": 477,
       "type": "caught"
     },
     {
-      "frame": 518,
+      "frame": 497,
       "type": "over"
     }
   ]

@@ -91,15 +91,6 @@ function skyTexture(rnd) {
       g.fillRect(-1, -1, 2, 2);
       g.restore();
     }
-    const img = g.getImageData(0, 0, W, H);
-    const d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const n = (rnd() - 0.5) * 3;
-      d[i] += n;
-      d[i + 1] += n;
-      d[i + 2] += n;
-    }
-    g.putImageData(img, 0, 0);
   });
 }
 

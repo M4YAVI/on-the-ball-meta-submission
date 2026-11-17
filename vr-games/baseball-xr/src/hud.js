@@ -9,13 +9,19 @@ import {
 
 // World-space panels drawn on canvas textures (screen-space UI does not exist in a headset).
 class Panel {
-  constructor(world, width, height, pixelsPerMetre, position) {
+  // Drawing code works in `pixelsPerMetre` units; the canvas holds `sharp` times more pixels so text is crisp in a
+  // headset (a Quest shows ~20 px/deg; the old 400 px/m gave only ~11 px/deg on the close card).
+  constructor(world, width, height, pixelsPerMetre, position, sharp = 2.2) {
+    this.W = Math.round(width * pixelsPerMetre);
+    this.H = Math.round(height * pixelsPerMetre);
     this.canvas = document.createElement('canvas');
-    this.canvas.width = Math.round(width * pixelsPerMetre);
-    this.canvas.height = Math.round(height * pixelsPerMetre);
+    this.canvas.width = Math.round(this.W * sharp);
+    this.canvas.height = Math.round(this.H * sharp);
     this.ctx = this.canvas.getContext('2d');
+    this.ctx.scale(sharp, sharp);
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
+    this.texture.anisotropy = 8;
     this.mesh = new Mesh(
       new PlaneGeometry(width, height),
       new MeshBasicMaterial({ map: this.texture, transparent: true, side: DoubleSide, depthWrite: false }),
@@ -25,8 +31,9 @@ class Panel {
   }
 
   card() {
-    const { ctx, canvas } = this;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const { ctx, W, H } = this;
+    const canvas = { width: W, height: H };
+    ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = 'rgba(14, 22, 38, 0.82)';
     ctx.beginPath();
     ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 36);
@@ -90,7 +97,7 @@ export class Hud {
     const m = this.model;
     const p = this.board;
     p.card();
-    const w = p.canvas.width;
+    const w = p.W;
     const colMax = w * 0.4;
     p.text(`Catches ${m.catches}`, w * 0.28, 95, 70, GOOD, 700, 'center', colMax);
     p.text(`Missed ${m.misses}`, w * 0.72, 95, 70, m.misses ? BAD : DIM, 700, 'center', colMax);
@@ -109,12 +116,12 @@ export class Hud {
   showCard(title, lines, hint) {
     const p = this.card;
     p.card();
-    const w = p.canvas.width;
+    const w = p.W;
     p.text(title, w / 2, 100, 84, '#ffffff', 700, 'center', w * 0.9);
     const step = lines.length > 4 ? Math.min(66, 250 / (lines.length - 1)) : 66;
     const size = lines.length > 4 ? 38 : 44;
     lines.forEach((line, i) => p.text(line.text, w / 2, 182 + i * step, size, line.color || DIM, 600, 'center', w * 0.88));
-    p.text(hint, w / 2, p.canvas.height - 50, 38, DIM, 600, 'center', w * 0.9);
+    p.text(hint, w / 2, p.H - 50, 38, DIM, 600, 'center', w * 0.9);
     p.commit();
     p.mesh.visible = true;
     this.board.mesh.visible = false; // the card already shows the result

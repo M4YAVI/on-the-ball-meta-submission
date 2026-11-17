@@ -30,7 +30,7 @@ export const CFG = {
   wristCutoff: 0, // a ball centre this close to the wrist (along the hand), or behind it, hit the wrist/forearm
   backSide: 0.07, // ball centre more than this behind the palm plane = back of the hand
   facingPalm: 0.2, // palm contact: ball must be moving into the palm (cosine of angle to the palm normal)
-  facingFinger: -0.1, // finger/thumb contact must be more square on than that
+  facingFinger: 0, // finger/thumb contact must be more square on than that
   fistOpenness: 0.08, // below this (fingertips within ~5 cm of the palm) the hand is a clenched fist: knuckles cannot catch
   deflectRestitution: 0.35, // bounce off the back of a hand
   stretchReach: 0.45, // a palm this far out sideways from its own shoulder (or across the body) is a stretching catch
@@ -41,6 +41,7 @@ export const CFG = {
   movingHands: 0.9, // m/s hand speed: caught on the move
   settleTime: 0.14, // seconds for a caught ball to settle into the palm (cushioned, no snapping)
   twoHandGap: 0.28, // palms closer than this together can make a two-handed cup
+  twoHandNear: 0.03, // cupped hands: the ball touches one, and the other is within this (beyond the cup's reach) of touching it on the same frame (they close on it together)
   nearMiss: 0.4, // a miss closer than this tells you by how much
   arriveZ: -0.65, // how far in front of the player the ball arrives: comfortable arm's reach
   targetSpreadX: 0.35, // random arrival offset left/right (kept inside the headset's field of view)

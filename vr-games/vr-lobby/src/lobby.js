@@ -30,7 +30,16 @@ export class LobbySystem extends createSystem({}) {
     this.gaze = new GazeRay();
     this.pinch = new HandPinch();
     this.desktop = new DesktopPointer(this.world, () => {
-      if (!this.world.session) this.press('pointer-click');
+      if (!this.world.session) {
+        const ray = this.desktop.ray(this.world.camera);
+        const hit = this.grid.pick(ray.origin, ray.direction);
+        if (hit >= 0) {
+          this.grid.setFocus(hit);
+          this.press('pointer-click');
+        } else if (this.grid.focused >= 0) {
+          this.press('pointer-click');
+        }
+      }
     });
 
     this.state = 'browse'; // 'browse' | 'launching'

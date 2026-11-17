@@ -29,6 +29,7 @@ const _R1 = new Vector3();
 const _pt = new Vector3();
 const _w = new Vector3();
 const _v = new Vector3();
+const _run = new Vector3();
 
 const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 
@@ -86,10 +87,21 @@ function pointSegDist(p, a, b) {
 }
 
 // ---------- hand model ----------
-const CAPS = ['forearm', 'palm', 'index', 'middle', 'pinky', 'thumb'];
+// Every finger is its three real bones (knuckle -> middle joint -> distal joint -> tip), so a curled
+// finger is a curve round the ball and not a straight stick across it. The thumb is two bones.
+const FINGER_NAMES = ['index', 'middle', 'ring', 'pinky'];
+const CAP_KINDS = [
+  'forearm',
+  'palm',
+  ...FINGER_NAMES.flatMap(() => ['finger', 'finger', 'finger']),
+  'thumb',
+  'thumb',
+];
 
 export function createHand(side) {
   const cap = (kind) => ({ kind, a: new Vector3(), b: new Vector3(), r: 0.03 });
+  const per = (names) => Object.fromEntries(names.map((n) => [n, new Vector3()]));
+  const all = [...FINGER_NAMES, 'thumb'];
   return {
     side,
     valid: false, // is this hand tracked this frame at all?
@@ -100,21 +112,31 @@ export function createHand(side) {
     normal: new Vector3(0, 0, -1), // out of the palm
     fingers: new Vector3(0, 1, 0), // wrist -> knuckles
     across: side === 'left' ? new Vector3(1, 0, 0) : new Vector3(-1, 0, 0), // towards the thumb side
-    tips: { index: new Vector3(), middle: new Vector3(), pinky: new Vector3(), thumb: new Vector3() },
-    knuckles: { index: new Vector3(), middle: new Vector3(), pinky: new Vector3(), thumb: new Vector3() },
+    // Per finger: knuckle (proximal joint), mids (middle joint), dists (distal joint) and tips. The thumb
+    // has no `mids`: its knuckle -> dist -> tip are its two bones.
+    tips: per(all),
+    knuckles: per(all),
+    mids: per(all),
+    dists: per(all),
     openness: 1, // 1 = flat open hand, 0 = clenched fist
     fist: false,
     vel: new Vector3(),
     prevPalm: new Vector3(),
     prevOk: false,
-    caps: CAPS.map(cap),
-    capCount: CAPS.length,
+    caps: CAP_KINDS.map(cap),
+    capCount: CAP_KINDS.length,
   };
+}
+
+// A finger's middle and distal joints when they are not known: evenly along the knuckle -> tip line.
+function straightChain(h, name) {
+  h.mids[name].lerpVectors(h.knuckles[name], h.tips[name], 1 / 3);
+  h.dists[name].lerpVectors(h.knuckles[name], h.tips[name], 2 / 3);
 }
 
 // Finishes a hand after its joint positions are set: capsules, openness, fist.
 function buildShape(h) {
-  const { fingers, across, palm, wrist, tips, knuckles } = h;
+  const { fingers, palm, wrist, tips, knuckles } = h;
   if (!h.hasNormal) {
     // A bare position (a controller or a plain point): one round volume, no facing information.
     h.capCount = 1;
@@ -127,7 +149,7 @@ function buildShape(h) {
     h.fist = false;
     return;
   }
-  h.capCount = CAPS.length;
+  h.capCount = CAP_KINDS.length;
   const fore = h.caps[0];
   fore.kind = 'forearm';
   fore.a.copy(wrist);
@@ -138,26 +160,30 @@ function buildShape(h) {
   pm.a.copy(palm).addScaledVector(fingers, -0.045);
   pm.b.copy(palm).addScaledVector(fingers, 0.03);
   pm.r = CFG.palmRadius;
-  const fingerCaps = [
-    ['index', 2],
-    ['middle', 3],
-    ['pinky', 4],
-  ];
-  for (const [name, i] of fingerCaps) {
-    const c = h.caps[i];
-    c.kind = 'finger';
-    c.a.copy(knuckles[name]);
-    c.b.copy(tips[name]);
-    c.r = CFG.fingerRadius;
+  let ci = 2;
+  for (const name of FINGER_NAMES) {
+    const joints = [knuckles[name], h.mids[name], h.dists[name], tips[name]];
+    for (let b = 0; b < 3; b++) {
+      const c = h.caps[ci++];
+      c.kind = 'finger';
+      c.a.copy(joints[b]);
+      c.b.copy(joints[b + 1]);
+      c.r = CFG.fingerRadius;
+    }
   }
-  const th = h.caps[5];
-  th.kind = 'thumb';
-  th.a.copy(knuckles.thumb);
-  th.b.copy(tips.thumb);
-  th.r = CFG.thumbRadius;
+  const thumb = [knuckles.thumb, h.dists.thumb, tips.thumb];
+  for (let b = 0; b < 2; b++) {
+    const c = h.caps[ci++];
+    c.kind = 'thumb';
+    c.a.copy(thumb[b]);
+    c.b.copy(thumb[b + 1]);
+    c.r = CFG.thumbRadius;
+  }
 
   // How open is the hand? Mean fingertip distance from the palm: ~0.11 m flat, ~0.035 m clenched.
-  const mean = (palm.distanceTo(tips.index) + palm.distanceTo(tips.middle) + palm.distanceTo(tips.pinky)) / 3;
+  let sum = 0;
+  for (const name of FINGER_NAMES) sum += palm.distanceTo(tips[name]);
+  const mean = sum / FINGER_NAMES.length;
   h.openness = clamp((mean - 0.035) / (0.11 - 0.035), 0, 1);
   h.fist = h.hasJoints && h.openness < CFG.fistOpenness;
 }
@@ -200,6 +226,24 @@ export function setHandFromJoints(h, J) {
   else t.pinky.copy(k.pinky).addScaledVector(h.fingers, 0.05);
   if (J.thumbTip) t.thumb.copy(J.thumbTip);
   else t.thumb.copy(k.thumb).addScaledVector(h.across, 0.03).addScaledVector(h.fingers, 0.04);
+  // The ring finger sits between the middle and the little finger.
+  if (J.ringProx) k.ring.copy(J.ringProx);
+  else k.ring.lerpVectors(k.middle, k.pinky, 0.35);
+  if (J.ringTip) t.ring.copy(J.ringTip);
+  else t.ring.lerpVectors(t.middle, t.pinky, 0.4);
+  // The joints in between: the real ones when the hand reports them, else evenly along the finger.
+  for (const name of FINGER_NAMES) {
+    const mid = J[name + 'Mid'];
+    const dist = J[name + 'Dist'];
+    if (mid && dist) {
+      h.mids[name].copy(mid);
+      h.dists[name].copy(dist);
+    } else {
+      straightChain(h, name);
+    }
+  }
+  if (J.thumbDist) h.dists.thumb.copy(J.thumbDist);
+  else h.dists.thumb.lerpVectors(k.thumb, t.thumb, 0.5);
   h.hasNormal = true;
   h.hasJoints = !!(J.middleTip && J.indexTip && J.pinkyTip && J.thumbTip);
   h.valid = true;
@@ -221,29 +265,35 @@ export function setHandFromPose(h, palm, normal, fingers, openness = 0.7) {
   const o = clamp(openness, 0, 1);
   const u = 1 - o; // 0 = flat hand, 1 = fist
   // A finger is three bones that curl towards the palm: knuckle ~90 deg, middle ~100, tip ~70 when clenched.
-  const fingerTip = (out, knuckle, l1, l2, l3) => {
+  const fingerTip = (name, l1, l2, l3) => {
     const a1 = u * 1.57;
     const a2 = a1 + u * 1.75;
     const a3 = a2 + u * 1.2;
-    out.copy(knuckle);
-    for (const [len, a] of [[l1, a1], [l2, a2], [l3, a3]]) {
-      out.addScaledVector(h.fingers, Math.cos(a) * len).addScaledVector(h.normal, Math.sin(a) * len);
-    }
+    _run.copy(k[name]);
+    // After each bone: the middle joint, the distal joint, the tip.
+    const stops = [h.mids[name], h.dists[name], t[name]];
+    [[l1, a1], [l2, a2], [l3, a3]].forEach(([len, a], i) => {
+      _run.addScaledVector(h.fingers, Math.cos(a) * len).addScaledVector(h.normal, Math.sin(a) * len);
+      stops[i].copy(_run);
+    });
   };
   const k = h.knuckles;
   const t = h.tips;
   k.middle.copy(palm).addScaledVector(h.fingers, 0.03);
   k.index.copy(k.middle).addScaledVector(h.across, 0.026);
+  k.ring.copy(k.middle).addScaledVector(h.across, -0.013);
   k.pinky.copy(k.middle).addScaledVector(h.across, -0.036);
   k.thumb.copy(palm).addScaledVector(h.across, 0.035).addScaledVector(h.fingers, -0.02);
-  fingerTip(t.middle, k.middle, 0.047, 0.03, 0.02);
-  fingerTip(t.index, k.index, 0.043, 0.027, 0.019);
-  fingerTip(t.pinky, k.pinky, 0.033, 0.02, 0.017);
+  fingerTip('middle', 0.047, 0.03, 0.02);
+  fingerTip('index', 0.043, 0.027, 0.019);
+  fingerTip('ring', 0.044, 0.028, 0.019);
+  fingerTip('pinky', 0.033, 0.02, 0.017);
   // The thumb swings across the palm as the hand closes.
   t.thumb.copy(k.thumb)
     .addScaledVector(h.fingers, 0.04 * (0.4 + 0.6 * o))
     .addScaledVector(h.across, 0.032 * (0.3 + 0.7 * o) - 0.03 * u)
     .addScaledVector(h.normal, 0.03 * u);
+  h.dists.thumb.lerpVectors(k.thumb, t.thumb, 0.5);
   h.hasNormal = true;
   h.hasJoints = true; // the pose has full finger geometry, so contact uses all of it
   h.valid = true;
@@ -543,7 +593,13 @@ export function evaluateCatch(L, R, prevBall, nowBall, ballVel, ballR, shoulders
   const dr = out.point.distanceTo(R.palm);
   const single = catchHand || (dl <= dr ? L : R);
   const cs = single === L ? cL : cR;
-  out.twoHand = pocket || (cL.result === 'catch' && cR.result === 'catch' && out.cupReady);
+  // Two cupped hands: both touch it, or the ball reaches the pocket between them, or it touches one while the
+  // other is a finger's width from it on the same frame (the first touch can fall a frame before the second;
+  // the hands close on it together, so it is still a two-handed catch).
+  const other = single === L ? R : L;
+  const otherC = single === L ? cR : cL;
+  const otherNear = out.cupReady && cs.hit && cs.result === 'catch' && !other.fist && other.hasNormal && otherC.gap <= CFG.cuppedBonus + CFG.twoHandNear && (!otherC.hit || otherC.result === 'catch');
+  out.twoHand = pocket || (cL.result === 'catch' && cR.result === 'catch' && out.cupReady) || otherNear;
   out.side = out.twoHand ? (dl <= dr ? 'left' : 'right') : single.side;
   out.relSpeed = cs.hit ? cs.relSpeed : _bv.copy(ballVel).sub(single.vel).length();
   out.quality = cs.hit && cs.result === 'catch' ? cs.quality : 0.6;

@@ -69,12 +69,14 @@ const check = (name, ok, extra = '') => {
   let s = await page.evaluate(() => ({ tut: window.__game.tutorial, stage: window.__game.tutorialStage, ring: window.__game.aimRingVisible }));
   check('the first round starts the practice, waiting for a hand', s.tut && s.stage === 'raise', JSON.stringify(s));
 
+  // The practice waits for a hand, but not for ever: after 8 s with no hand it goes ahead anyway (so a
+  // player whose hands are not tracked is not stuck on the title). 5 s in, it is still waiting.
   await page.evaluate(() => {
     T.handAway();
-    T.step(() => false, null); // runs the full cap: 40 s with no hand
+    T.step(() => T.sys.tut.t > 5, null);
   });
   s = await page.evaluate(() => ({ stage: window.__game.tutorialStage, state: window.__game.state, ring: window.__game.aimRingVisible, ballNo: window.__game.ballNo }));
-  check('with no hand in the ring it waits (no ball is thrown)', s.stage === 'raise' && s.state === 'ready' && s.ballNo === 0, JSON.stringify(s));
+  check('with no hand in the ring it waits for a few seconds (no ball is thrown)', s.stage === 'raise' && s.state === 'ready' && s.ballNo === 0, JSON.stringify(s));
   check('the ring is shown so the player knows where to put a hand', s.ring === true);
 
   // ---- hand in the ring: the first ball comes, slow and straight ----
@@ -139,6 +141,29 @@ const check = (name, ok, extra = '') => {
   await open('?balls=6&tutorial=0');
   await page.evaluate(() => window.__game.start());
   check('?tutorial=0 skips the practice', await page.evaluate(() => window.__game.tutorial === false && window.__game.tutorialDone === true));
+
+  // ---- no hand at all: the practice goes ahead on its own after 8 s, so nobody is stuck on the title ----
+  await page.evaluate(() => localStorage.clear());
+  await open('?balls=6');
+  await page.evaluate(() => {
+    const sys = window.__game.sys;
+    sys.desktop.ndc.set(0.95, -0.95);
+    sys.desktop.seen = true;
+    window.__game.start();
+    for (let i = 0; i < 60 * 8.5 && sys.tut && sys.tut.stage === 'raise'; i++) sys.update(1 / 60);
+  });
+
+  // ---- no hand at all: the practice goes ahead after 8 s, so a player whose hands are not tracked is not stuck ----
+  await page.evaluate(() => localStorage.clear());
+  await open('?balls=6');
+  await page.evaluate(() => {
+    const sys = window.__game.sys;
+    window.__game.start();
+    sys.desktop.ndc.set(0.95, -0.95);
+    sys.desktop.seen = true;
+    for (let i = 0; i < 60 * 9 && sys.tut && sys.tut.stage === 'raise'; i++) sys.update(1 / 60);
+  });
+  check('with no hand at all the practice goes ahead after 8 s, so nobody is stuck', await page.evaluate(() => window.__game.tutorialStage === 'ball' || window.__game.state !== 'ready'));
 
   check('no page or console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

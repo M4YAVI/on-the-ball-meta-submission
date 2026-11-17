@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Group, Quaternion, Vector3 } from '@iwsdk/core';
-import { applyCurl, basisQuaternion, buildCurlRig, desiredHandPose, easePose, proximityOf } from '../src/hand-anim.js';
+import { applyCurl, basisQuaternion, buildCurlRig, desiredHandPose, easePose, proximityOf, wantsBothHands } from '../src/hand-anim.js';
 
 const V = (x, y, z) => new Vector3(x, y, z);
 const newPose = () => ({ normal: V(0, 0, -1), fingers: V(0, 1, 0), openness: 0.8, gap: 0.3, proximity: 0 });
@@ -162,4 +162,18 @@ test('a rig with no matching bones, or applying no rig, does nothing and never t
   assert.equal(rig.bones.length, 0);
   applyCurl(rig, 0.3);
   applyCurl(null, 0.3);
+});
+
+test('a ball coming at the body brings both hands together; a wide ball is one hand', () => {
+  const g = (over) => ({ state: 'flying', holding: false, twoHanded: false, wasPaired: false, isWide: false, aimX: 0, headX: 0, ...over });
+  assert.equal(wantsBothHands(g({})), true, 'straight at the chest');
+  assert.equal(wantsBothHands(g({ aimX: 0.3 })), true, 'a little off line is still at the body');
+  assert.equal(wantsBothHands(g({ state: 'swinging' })), true, 'ready while the coach strikes');
+  assert.equal(wantsBothHands(g({ isWide: true, aimX: 0.78 })), false, 'wide: one-handed stretch');
+  assert.equal(wantsBothHands(g({ aimX: 0.6 })), false, 'well outside the body');
+  assert.equal(wantsBothHands(g({ aimX: 0.6, headX: 0.4 })), true, 'measured from where the player stands');
+  assert.equal(wantsBothHands(g({ state: 'ready' })), false, 'no ball in the air');
+  assert.equal(wantsBothHands(g({ state: 'feedback', holding: true, wasPaired: true })), true, 'both stay round a ball caught together');
+  assert.equal(wantsBothHands(g({ state: 'feedback', holding: true })), false, 'a one-handed catch stays one-handed');
+  assert.equal(wantsBothHands(null), false);
 });
