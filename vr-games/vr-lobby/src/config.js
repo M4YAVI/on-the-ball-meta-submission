@@ -18,7 +18,7 @@ export const CFG = {
     stickiness: 0.025, // the gaze must leave the focused tile by this much to move on, so the ring does not flicker
   },
 
-  // Reading order. `key` on a PC is this position + 1. `span: 2` fills the row.
+  // Reading order, three games to a row. `key` on a PC is this position + 1. `span: 2` would make a tile two columns wide.
   games: [
     {
       id: 'baseball',
@@ -44,8 +44,8 @@ export const CFG = {
       id: 'bulbrush',
       title: 'Bulb Rush',
       art: 'bulb',
-      row: 1,
-      col: 0,
+      row: 0,
+      col: 2,
       port: 8083,
       storageKey: 'bulbrush-best',
       bestSuffix: ' pts',
@@ -55,7 +55,7 @@ export const CFG = {
       title: 'ON THE BALL',
       art: 'ontheball',
       row: 1,
-      col: 1,
+      col: 0,
       port: 8084,
       storageKey: 'otb-best-green',
       bestSuffix: ' / 20 green',
@@ -64,26 +64,54 @@ export const CFG = {
       id: 'ontheballfootball',
       title: 'ON THE BALL Football',
       art: 'football',
-      row: 2,
-      col: 0,
-      span: 2, // the bottom row is one wide tile
+      row: 1,
+      col: 1,
       port: 8085,
       path: 'ontheball/football', // where the hub serves it
       storageKey: 'otb-football-best-green',
       bestSuffix: ' / 20 green',
     },
+    {
+      id: 'ontheballtennis',
+      title: 'ON THE BALL Tennis',
+      art: 'tennis',
+      row: 1,
+      col: 2,
+      port: 8086,
+      path: 'ontheball/tennis', // where the hub serves it
+      storageKey: 'otb-tennis-best-green',
+      bestSuffix: ' / 20 green',
+    },
+    {
+      id: 'ontheballbaseball',
+      title: 'ON THE BALL Baseball',
+      art: 'otbbaseball',
+      row: 2,
+      col: 0,
+      port: 8087,
+      path: 'ontheball/baseball', // where the hub serves it
+      storageKey: 'otb-baseball-best-green',
+      bestSuffix: ' / 20 green',
+    },
   ],
 };
 
+// How many columns and rows the grid has, counted from the games' positions.
+function gridCounts(games) {
+  const cols = Math.max(...games.map((game) => game.col + (game.span || 1)));
+  const rows = Math.max(...games.map((game) => game.row)) + 1;
+  return { cols, rows };
+}
+
 // Where each game's tile sits on the grid: centre and size in metres, with (0, 0) at the middle of the grid.
 export function tileRects(games = CFG.games, g = CFG.grid) {
-  const rows = Math.max(...games.map((game) => game.row)) + 1;
+  const { cols, rows } = gridCounts(games);
   const pitchX = g.tileW + g.gap;
   const pitchY = g.tileH + g.gap;
   return games.map((game) => {
     const span = game.span || 1;
     return {
-      x: (game.col + span / 2 - 1) * pitchX,
+      x: (game.col + span / 2 - cols / 2) * pitchX,
       y: ((rows - 1) / 2 - game.row) * pitchY,
       w: span * g.tileW + (span - 1) * g.gap,
       h: g.tileH,
@@ -92,8 +120,8 @@ export function tileRects(games = CFG.games, g = CFG.grid) {
 }
 
 export function gridSize(games = CFG.games, g = CFG.grid) {
-  const rows = Math.max(...games.map((game) => game.row)) + 1;
-  return { w: 2 * g.tileW + g.gap, h: rows * g.tileH + (rows - 1) * g.gap };
+  const { cols, rows } = gridCounts(games);
+  return { w: cols * g.tileW + (cols - 1) * g.gap, h: rows * g.tileH + (rows - 1) * g.gap };
 }
 
 export function getGameUrl(game) {

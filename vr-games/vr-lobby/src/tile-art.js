@@ -431,6 +431,59 @@ const PAINTERS = {
     drawCricketBall(ctx, x, y, r);
     vignette(ctx, 0.5);
   },
+  tennis(ctx) {
+    paintSurface(
+      ctx,
+      404,
+      (u, v) => {
+        const k = 0.7 + 0.3 * Math.min(1, v * 1.4);
+        return [34 * k, 62 * k, 48 * k];
+      },
+      (v) => 5 + 18 * v,
+      0.004,
+    );
+    const r = H * 0.29;
+    const x = ctx.canvas.width * 0.5;
+    const y = H * 0.54;
+    softShadow(ctx, x + r * 0.26, y + r * 0.78, r * 1.34, r * 0.52, 0.76);
+    drawSphere(ctx, x, y, r, [200, 216, 52], { spec: 10, shininess: 10, pebble: 0.22, seed: 41 });
+    // The seam is the same closed curve as a baseball's, drawn as a pale band.
+    const A = 0.5;
+    const turn = rotator(0.5, 0.25, 0.9);
+    const at = (t) => {
+      const phi = Math.PI / 2 - (Math.PI / 2 - A) * Math.cos(t);
+      const th = t / 2 + A * Math.sin(2 * t);
+      return turn([Math.sin(phi) * Math.cos(th), Math.sin(phi) * Math.sin(th), Math.cos(phi)]);
+    };
+    ctx.lineCap = 'round';
+    const steps = 900;
+    let prev = at(0);
+    for (let i = 1; i <= steps; i++) {
+      const p = at((i / steps) * 4 * Math.PI);
+      strokeOnBall(ctx, x, y, r, prev, p, [236, 238, 226], r * 0.075);
+      prev = p;
+    }
+    vignette(ctx, 0.5);
+  },
+  otbbaseball(ctx) {
+    // ON THE BALL's dark green with a baseball: the catcher's-view baseball sport (the plain "baseball" tile is Glove Up).
+    paintSurface(
+      ctx,
+      707,
+      (u, v) => {
+        const k = 0.55 + 0.35 * Math.min(1, v * 1.3);
+        return [18 * k, 52 * k, 36 * k];
+      },
+      (v) => 4 + 16 * v,
+      0.003,
+    );
+    const r = H * 0.27;
+    const x = ctx.canvas.width * 0.5;
+    const y = H * 0.5;
+    softShadow(ctx, x + r * 0.26, y + r * 0.78, r * 1.34, r * 0.52, 0.76);
+    drawBaseball(ctx, x, y, r);
+    vignette(ctx, 0.5);
+  },
   football(ctx) {
     paintSurface(
       ctx,
@@ -443,7 +496,7 @@ const PAINTERS = {
       0.004,
     );
     const r = H * 0.29;
-    const x = ctx.canvas.width * 0.5; // the bottom tile is two columns wide
+    const x = ctx.canvas.width * 0.5;
     const y = H * 0.54;
     softShadow(ctx, x + r * 0.26, y + r * 0.78, r * 1.34, r * 0.52, 0.76);
     drawSphere(ctx, x, y, r, [236, 236, 230], { spec: 46, shininess: 26, pebble: 0.04, seed: 51 });
@@ -491,6 +544,8 @@ export const ART_LAYOUT = {
   ontheball: { ringX: 0.5, ringY: 0.5, labelSide: 'left' },
   bulb: { ringX: 0.5, ringY: 0.5, labelSide: 'left' },
   football: { ringX: 0.5, ringY: 0.54, labelSide: 'left' },
+  tennis: { ringX: 0.5, ringY: 0.54, labelSide: 'left' },
+  otbbaseball: { ringX: 0.5, ringY: 0.5, labelSide: 'left' },
 };
 
 export function paintTile(art, widthOverHeight) {
