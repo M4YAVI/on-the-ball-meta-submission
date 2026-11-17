@@ -10,13 +10,68 @@ official Meta Immersive Web SDK (IWSDK 1.1.0) from the VEGAH handoff baseline (`
 3. Choose how the ball is followed: **Eye tracking** (after a 10-second calibration) or **Head mode**.
 4. You are the **batsman**: you take guard at the crease, your stumps behind you, the bowler 22 yards away. One warm-up ball,
    then 20 deliveries come at you on three lines (left, straight, right) and varying lengths. The ball is a red cricket
-   ball with the deck's white ring around it (slides 5 and 12). You only watch. Nothing to catch or hit.
+   ball with the deck's white ring around it (slides 5 and 12). A cricket bat is in your hand (see "Batting" below): swing it
+   and play the ball. The score is still how well your eyes stayed on the ball.
 5. After each ball: GREEN / AMBER / RED / UNSCORED with a symbol, a word and a plain reason. After 20: the scorecard with the
    20 dots in order, the counts, minutes, and your earlier sessions underneath (with "+N green on your last session").
 
 Hands are only for navigation (look + pinch, or hand ray + pinch). Pause, start over and exit are always available.
 The X on the scorecard ("Done") goes back to the sport tiles. A pause, a hidden page, the end of the XR session or a
 recenter throws away the ball in flight; it is replayed, never scored as a miss.
+
+## Batting (cricket)
+A full-size cricket bat (Law 5 sizes: 10.8 cm wide blade, flat face, curved back with a spine, rubber grip) sits in the right
+hand, or the left when only the left is tracked, on Quest controllers and on tracked hands. It follows the hand's grip pose
+every frame. Nothing else moves it: no buttons, no auto-swing, no animation. The controller is the bat's handle, exactly as
+a real bat sits in the fist (WebXR grip space: the held rod runs along Z, -Z toward the thumb): the top of the handle is on
+the thumb side, the blade comes out below the little finger and the face looks where the palm looks. Hold the controller
+like a handle (ring up, palm to the bowler) for the stance; the bat is always at the same angle as the hand.
+
+- **A batsman's own view.** Two padded batting gloves (white, blue trim, finger rolls) grip the handle (`src/xr/gloves.js`, look
+  only: the hit test uses the blade). On the PC the stance is what a batsman sees of his bat: gloves low at the bottom of the
+  view, the bat leaning forward and out to the side over the pitch. The backlift takes the hands back to the hip and the bat
+  out of view, the follow-through finishes over the front shoulder, out of view again; only the stance and the swing through
+  the ball are seen, and the incoming ball is never covered. The lean is a look only: the face stays square and the middle of
+  the bat travels down the ball's line. On a headset the bat and gloves are wherever the real hand is.
+- **On the PC emulator (no hands to swing): look + scroll.** The mouse stays the eyes (the emulator's simulated gaze follows
+  the cursor; in Play mode the mouse turns the head), so batting never takes it away from the eye-tracking score. The bat
+  stands in front of you on the line you look along; the **scroll wheel** (or a two-finger swipe) is the swing: roll BACK to
+  lift the bat (backlift), roll FORWARD to swing it through. A fast roll from a full backlift is a drive (about 95-100 km/h
+  off the middle), a slow roll a push. Nothing moves the bat but the player: it stays where it was put (a test counts any
+  frame it moves with no wheel input: 0). Works with Play mode on or off.
+  Works with Play mode on or off. The PC control gets a slightly larger contact size (`PC_HIT_PAD`, 3.5 cm) because a wheel is
+  cruder than an arm. Only when the IWER emulator is running; a headset never uses any of it (`src/xr/mouse-bat.js`).
+- **Timing meter (right of the view): EARLY / PERFECT / LATE.** Each time the bat meets the ball a marker lands on the meter
+  where your timing was and that zone lights up (it is dim the rest of the time). Timing is the ball's depth at the touch
+  (`TIMING` in `src/core/bat-physics.js`): met far out in front is EARLY, nearer the body is LATE, a narrow band (22 cm) around
+  the ideal point is PERFECT. **A PERFECT touch off a lively part of the blade, with a real swing, goes out of the ground**: it
+  leaves at 130 km/h, 24 degrees up, in the direction you played it (left or right of straight), so it clears the rope on the
+  full. An edge, a dab, a toe or shoulder hit or a glance behind square never does. The meter is feedback only: it is not the
+  eye-tracking score.
+- **A slightly bigger target.** The ball's contact size is 2 cm bigger on a headset (5 cm on the PC control), so a ball that
+  just grazes past still counts (`HIT_PAD` / `PC_HIT_PAD` in `src/game.js`). The bat and the ball are never moved toward each
+  other, so a swing that is really early or late still misses.
+- **The ball stays hittable.** After its arrival point a cricket ball carries straight on through the batting zone; it is
+  only steered aside if it would pass near the face (`startRoll(..., clearIn3d)`; the other sports are unchanged).
+
+- **The hit is physics, not an animation.** Every frame a swept test (`src/core/bat-physics.js`) moves the blade and the ball
+  together in 2 cm steps, so neither a 140 km/h ball nor a fast swing can pass through the bat between frames. The ball leaves
+  the face from the bat's own velocity at the contact point (measured over the last ~30 ms of hand poses, capped at 32 m/s
+  against tracking spikes), a coefficient of restitution of 0.56 at the sweet spot (~21 cm up from the toe) that falls to 0.18
+  at the toe and the shoulder, and friction along the face. A dead bat blocks the ball and drops it nearby. A hard swing drives
+  it, and the bat's direction sets where it goes. A ball on the curved edge flies off sideways ("Edged").
+- **The batted ball** flies with the same air drag as the bowled one, bounces and rolls on the outfield, and stops at the
+  fence. Over the rope on the full is "SIX!", along the ground "FOUR!". The call-out shows the speed off the bat, and a
+  boundary gets a crowd cheer.
+- **Feel:** a willow "tock" from the middle, a thin click off an edge, a whoosh on a hard swing. A controller pulse is short
+  and clean from the middle and a longer sting off the toe or shoulder. Tracked hands have nothing to vibrate.
+- **Scoring is unchanged.** The eye-tracking Trial, its thresholds and the verdicts are untouched. If the ball is hit before
+  its arrival point, the eyes are scored against where the ball really is (off the bat) until the arrival time, then the
+  delivery closes as before. Shot call-outs are never part of the score.
+- The bat is in hand on the ready screen (practice swings), every delivery and the pause; it is hidden on the menus.
+- Tuning knobs: `BAT`/`HIT` in `src/core/bat-physics.js`, `gripToBat` in `src/xr/bat.js` (how the bat sits in the fist),
+  the swing range and hand position at the top of `src/xr/mouse-bat.js`.
+- Demo video: `node record-cricket-batting.mjs` (repo root) records the emulator with a scripted arm swinging the controller.
 
 ## The four sports
 All four are watch-only, seated, twenty balls and the same scoring, and they share the engine in `src/core` and the panels in

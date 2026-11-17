@@ -16,13 +16,13 @@
     "test:baseline": "node handoff-baseline/tests.mjs",
     "dev:football": "vite --config football/vite.config.js football",
     "build:football": "vite build --config football/vite.config.js football",
-    "test:football": "node --test football/tests/football.test.mjs",
+    "test:football": "node --test football/tests/football.test.mjs football/tests/goalkeeping.test.mjs",
     "dev:tennis": "vite --config tennis/vite.config.js tennis",
     "build:tennis": "vite build --config tennis/vite.config.js tennis",
     "test:tennis": "node --test tennis/tests/tennis.test.mjs",
     "dev:baseball": "vite --config baseball/vite.config.js baseball",
     "build:baseball": "vite build --config baseball/vite.config.js baseball",
-    "test:baseball": "node --test baseball/tests/baseball.test.mjs"
+    "test:baseball": "node --test baseball/tests/baseball.test.mjs baseball/tests/catching.test.mjs"
   },
   "dependencies": {
     "@iwsdk/core": "1.1.0",
