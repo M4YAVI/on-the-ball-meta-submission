@@ -10,34 +10,22 @@ const rects = tileRects();
 const at = (id) => rects[CFG.games.findIndex((g) => g.id === id)];
 const pick = (x, y, current = -1) => pickTile(x, y, rects, current, gap, stickiness);
 
-test('Config: the seven games, on distinct ports that are not the lobby', () => {
-  assert.deepEqual(CFG.games.map((g) => g.id), ['baseball', 'cricket', 'bulbrush', 'ontheball', 'ontheballfootball', 'ontheballtennis', 'ontheballbaseball']);
+test('Config: the five games, on distinct ports that are not the lobby', () => {
+  assert.deepEqual(CFG.games.map((g) => g.id), ['baseball', 'bulbrush', 'ontheball', 'ontheballfootball', 'ontheballtennis']);
   const ports = CFG.games.map((g) => g.port);
-  assert.equal(new Set(ports).size, 7);
+  assert.equal(new Set(ports).size, 5);
   assert.ok(!ports.includes(8080));
 });
 
-test('Layout: three to a row, in reading order: Glove Up, Cricket Catch, Bulb Rush across the top', () => {
-  const top = at('baseball').y;
-  assert.ok(Math.abs(at('cricket').y - top) < 1e-9 && Math.abs(at('bulbrush').y - top) < 1e-9);
-  assert.ok(at('baseball').x < at('cricket').x && at('cricket').x < at('bulbrush').x);
-  assert.ok(Math.abs(at('baseball').w - at('cricket').w) < 1e-9 && Math.abs(at('bulbrush').w - at('cricket').w) < 1e-9);
-});
-
-test('Layout: ON THE BALL, Football and Tennis share the second row, in that order, under the top three', () => {
-  const row = at('ontheball').y;
-  assert.ok(row < at('baseball').y);
-  assert.ok(Math.abs(at('ontheballfootball').y - row) < 1e-9 && Math.abs(at('ontheballtennis').y - row) < 1e-9);
-  assert.ok(at('ontheball').x < at('ontheballfootball').x && at('ontheballfootball').x < at('ontheballtennis').x);
-});
-
-test('Layout: ON THE BALL Baseball sits on its own row under ON THE BALL, in the left column (the batsman view stays cricket)', () => {
-  const b = at('ontheballbaseball');
-  const o = at('ontheball');
-  assert.ok(b.y < o.y, 'a row below the second row');
-  assert.ok(Math.abs(b.x - o.x) < 1e-9 && Math.abs(b.w - o.w) < 1e-9);
-  assert.equal(CFG.games.find((g) => g.id === 'ontheballbaseball').path, 'ontheball/baseball');
-  assert.notEqual(CFG.games.find((g) => g.id === 'ontheballbaseball').art, CFG.games.find((g) => g.id === 'baseball').art, 'its picture is not the Glove Up one');
+test('Layout: columns of three, top to bottom: Glove Up, Bulb Rush, ON THE BALL; then Football and Tennis beside them', () => {
+  const left = ['baseball', 'bulbrush', 'ontheball'].map(at);
+  const right = ['ontheballfootball', 'ontheballtennis'].map(at);
+  for (const r of [...left, ...right]) assert.ok(Math.abs(r.w - left[0].w) < 1e-9);
+  for (const r of left) assert.ok(Math.abs(r.x - left[0].x) < 1e-9, 'one column');
+  assert.ok(left[0].y > left[1].y && left[1].y > left[2].y, 'top to bottom');
+  assert.ok(Math.abs(right[0].x - right[1].x) < 1e-9, 'one column');
+  assert.ok(Math.abs(right[0].y - left[0].y) < 1e-9 && Math.abs(right[1].y - left[1].y) < 1e-9, 'same rows as the first column');
+  assert.ok(left[0].x < right[0].x, 'the second column is to the right');
 });
 
 test('Layout: the whole grid fits the view of Meta VR Glasses without a head turn', () => {
@@ -54,24 +42,15 @@ test('Gaze: each tile is picked from its own centre, and off the grid is nothing
 });
 
 test('Gaze: there is no dead strip in the gap between two tiles', () => {
-  assert.notEqual(pick((at('baseball').x + at('cricket').x) / 2, at('cricket').y), -1, 'between Glove Up and Cricket Catch');
-  assert.notEqual(pick(at('ontheball').x, (at('ontheball').y + at('ontheballbaseball').y) / 2), -1, 'between the eyes rows (an ordinary gap)');
-});
-
-test('Layout: the line between the hands-only and eyes games sits in the section gap, with no tile on it', () => {
-  const rowBottom = at('baseball').y - at('baseball').h / 2; // bottom of the hands-only row
-  const eyesTop = at('ontheball').y + at('ontheball').h / 2; // top of the first eyes row (it sits lower)
-  const lineY = (rowBottom + eyesTop) / 2;
-  assert.ok(rowBottom - eyesTop > CFG.grid.gap * 3, 'the section gap is wider than an ordinary gap');
-  assert.equal(pick(at('cricket').x, lineY), -1, 'the line is not a tile');
+  assert.notEqual(pick((at('baseball').x + at('ontheballfootball').x) / 2, at('baseball').y), -1, 'between Glove Up and Football');
 });
 
 test('Gaze: the ring stays put until the eyes have clearly left the tile', () => {
   const baseball = CFG.games.findIndex((g) => g.id === 'baseball');
-  const cricket = CFG.games.findIndex((g) => g.id === 'cricket');
-  const justOverTheLine = at('cricket').x - at('cricket').w / 2 + 0.005;
-  assert.equal(pick(justOverTheLine, at('cricket').y, baseball), baseball, 'a small wobble does not move it');
-  assert.equal(pick(at('cricket').x, at('cricket').y, baseball), cricket, 'a real look does');
+  const football = CFG.games.findIndex((g) => g.id === 'ontheballfootball');
+  const justOverTheLine = at('ontheballfootball').x - at('ontheballfootball').w / 2 + 0.005;
+  assert.equal(pick(justOverTheLine, at('ontheballfootball').y, baseball), baseball, 'a small wobble does not move it');
+  assert.equal(pick(at('ontheballfootball').x, at('ontheballfootball').y, baseball), football, 'a real look does');
 });
 
 test('Pinch: one close is one press, however long it is held', () => {
@@ -113,8 +92,8 @@ test('Guide: asks for a look, then a pinch; on a PC, a click', () => {
 });
 
 test('Best score: shown when saved, absent when not, and safe when storage is blocked', () => {
-  const game = CFG.games.find((g) => g.id === 'cricket');
-  assert.equal(bestText(game, { getItem: () => '31' }), 'Best 31 / 50');
+  const game = CFG.games.find((g) => g.id === 'baseball');
+  assert.equal(bestText(game, { getItem: () => '31' }), 'Best 31 / 25');
   assert.equal(bestText(game, { getItem: () => null }), null);
   const blocked = { getItem: () => { throw new Error('blocked'); } };
   assert.equal(bestText(game, blocked), null);

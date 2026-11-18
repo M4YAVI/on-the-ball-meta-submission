@@ -72,7 +72,7 @@ const ARGS = ['--ignore-certificate-errors', '--use-angle=swiftshader', '--enabl
   // 1. The grid.
   let page = await open();
   const ids = await page.evaluate(() => window.__lobby.grid.tiles.map((t) => t.game.id));
-  check('Three tiles, one per real game', ids.join() === 'baseball,cricket,bulbrush', ids.join());
+  check('Five games, Glove Up and Bulb Rush first', ids.slice(0, 2).join() === 'baseball,bulbrush', ids.join());
   check('PC view shows the visor frame', await page.evaluate(() => getComputedStyle(document.getElementById('visor')).display !== 'none'));
   check('PC: the ring starts on the first tile', (await read(page)).focused === 0);
 
@@ -106,18 +106,18 @@ const ARGS = ['--ignore-certificate-errors', '--use-angle=swiftshader', '--enabl
   await page.evaluate(() => window.__t.pose('open'));
 
   // 6. Look, then pinch: the game opens, and it is the one the ring was on.
-  await page.evaluate(() => window.__t.lookAt(1));
+  await page.evaluate(() => window.__t.lookAt(0));
   await page.evaluate(() => window.__t.pose('pinch'));
   s = await read(page);
-  check('Look at Cricket Catch + pinch opens Cricket Catch', s.state === 'launching' && s.game === 'cricket', `state=${s.state} game=${s.game} via ${s.gesture}`);
-  await page.waitForURL(/:8081/, { timeout: 5000 }).catch(() => {});
-  check('The browser goes to the game', /:8081/.test(page.url()), page.url());
+  check('Look at Glove Up + pinch opens Glove Up', s.state === 'launching' && s.game === 'baseball', `state=${s.state} game=${s.game} via ${s.gesture}`);
+  await page.waitForURL(/:8082/, { timeout: 5000 }).catch(() => {});
+  check('The browser goes to the game', /:8082/.test(page.url()), page.url());
   await page.close();
 
   // 7. A controller trigger counts as a pinch.
   page = await open();
   await enterXR(page);
-  await page.evaluate(() => window.__t.lookAt(2));
+  await page.evaluate(() => window.__t.lookAt(1));
   await page.evaluate(() => window.__lobby.onSelectStart());
   s = await read(page);
   check('Controller trigger opens the tile in view', s.state === 'launching' && s.game === 'bulbrush', `game=${s.game}`);
@@ -127,13 +127,13 @@ const ARGS = ['--ignore-certificate-errors', '--use-angle=swiftshader', '--enabl
   page = await open();
   await page.keyboard.press('2');
   s = await read(page);
-  check('PC: key 2 opens the second tile', s.state === 'launching' && s.game === 'cricket', `game=${s.game}`);
+  check('PC: key 2 opens the second tile', s.state === 'launching' && s.game === 'bulbrush', `game=${s.game}`);
   await page.close();
 
   page = await open();
   const spot = await page.evaluate(() => {
     const l = window.__lobby;
-    const c = l.grid.tiles[2].ringCentre();
+    const c = l.grid.tiles[1].ringCentre();
     const v = l.grid.root.localToWorld(l.grid.o.clone().set(c.x, c.y, 0)).project(window.__world.camera);
     return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight };
   });
