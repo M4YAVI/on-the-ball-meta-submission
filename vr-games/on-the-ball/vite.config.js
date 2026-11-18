@@ -6,8 +6,9 @@
  */
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
 import { defineConfig } from 'vite';
+import { stripDevOnlyHtml } from '../strip-dev-only-html.mjs';
 export default defineConfig({
-    plugins: [iwsdkDev()],
+    plugins: [iwsdkDev(), stripDevOnlyHtml()],
     server: { host: '0.0.0.0', port: 8084, open: false },
     build: {
         outDir: 'dist',

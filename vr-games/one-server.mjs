@@ -31,6 +31,8 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HUB = path.join(ROOT, 'hub');
 const PORT = Number(process.env.PORT) || 8443;
 const HOST = process.env.HOST || '0.0.0.0';
+// GitHub Pages serves the hub under /<repo-name>/, so the workflow sets PUBLIC_BASE to that prefix. Local runs leave it empty.
+const PUBLIC_BASE = (process.env.PUBLIC_BASE || '').replace(/\/$/, '');
 
 // `mount` is the sub-folder the app is served from. The lobby sits at the root.
 const APPS = [
@@ -91,7 +93,7 @@ function rewriteDevLinks(dir) {
       rewriteDevLinks(p);
     } else if (entry.name.endsWith('.html')) {
       let html = fs.readFileSync(p, 'utf8');
-      for (const [from, to] of DEV_LINKS) html = html.split(from).join(to);
+      for (const [from, to] of DEV_LINKS) html = html.split(from).join(PUBLIC_BASE + to);
       fs.writeFileSync(p, html);
     }
   }
@@ -221,6 +223,11 @@ try {
   } else {
     for (const app of APPS) buildApp(app);
     assemble();
+    if (process.argv.includes('--build-only')) {
+      // The GitHub Pages workflow: the built hub in hub/ is the artifact, nothing is served.
+      console.log('\n[done] built only (--build-only), not serving.');
+      process.exit(0);
+    }
   }
   startServer();
 } catch (e) {

@@ -1,4 +1,4 @@
-name: Deploy ON THE BALL to GitHub Pages
+name: Deploy VR Games Hub to GitHub Pages
 
 on:
   push:
@@ -19,19 +19,25 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: vr-games/on-the-ball
+        working-directory: vr-games
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-          cache-dependency-path: vr-games/on-the-ball/package-lock.json
+          cache-dependency-path: vr-games/package-lock.json
+      # One install in vr-games serves every app (the same layout one-server.mjs uses locally).
       - run: npm ci
-      - run: npx vite build
+      # Builds the lobby and the five games (Glove Up, Bulb Rush, ON THE BALL, Football, Tennis) and
+      # assembles them into vr-games/hub. PUBLIC_BASE puts the games under /<repo>/ on Pages.
+      - name: Build lobby and games
+        env:
+          PUBLIC_BASE: /${{ github.event.repository.name }}
+        run: node one-server.mjs --build-only
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: vr-games/on-the-ball/dist
+          path: vr-games/hub
 
   deploy:
     needs: build

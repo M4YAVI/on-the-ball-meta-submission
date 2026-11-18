@@ -1,10 +1,11 @@
 // ON THE BALL · Tennis. A sub-project of on-the-ball: it has no node_modules of its own (Node finds the parent's), shares the
 // scoring engine in ../src/core and the panels in ../src/xr.
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
+import { stripDevOnlyHtml } from '../../strip-dev-only-html.mjs';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 export default defineConfig({
-  plugins: [iwsdkDev()],
+  plugins: [iwsdkDev(), stripDevOnlyHtml()],
   cacheDir: '../node_modules/.vite-tennis',
   server: { host: '0.0.0.0', port: 8086, open: false },
   build: {
