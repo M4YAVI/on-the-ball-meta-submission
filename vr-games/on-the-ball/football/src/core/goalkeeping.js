@@ -18,7 +18,7 @@ export const GLOVE = Object.freeze({
   pcReach: 0.15, // the PC emulator's control is cruder than an arm: a slightly bigger target (never aim assist)
   palmOut: 0.04, // the palm centre sits this far in front of the grip point (toward the ball)
   together: 0.34, // m between the palm centres: closer than this, the two hands make one "W" and can hold the ball
-  catchSpeed: 22, // m/s relative to the hands: up to here two hands together hold it; faster, it is only parried
+  catchSpeed: 28, // m/s relative to the hands (~100 km/h): up to here two hands together hold it (a 110 km/h strike arrives at 25-27); faster, it is only parried
   punchSpeed: 3.0, // m/s: a glove driving toward the ball at least this fast punches it clear
   parryE: 0.45, // how much of the ball's speed into the glove comes back out (foam and a giving wrist)
   punchE: 0.75,
@@ -60,6 +60,20 @@ export function sweepGlove(prevBall, ball, prevGlove, glove, reach = GLOVE.reach
   const l = len(rel);
   const normal = l > 1e-6 ? [rel[0] / l, rel[1] / l, rel[2] / l] : [0, 0, -1];
   return { t, ball: lerp(prevBall, ball, t), glove: lerp(prevGlove, glove, t), normal };
+}
+
+// Two hands together meet the ball as ONE surface (the "W" behind it), not as two separate palms. The sweep finds whichever
+// palm the ball touched first, and for a ball between the hands that touch is on the palm's edge: its normal points sideways and
+// a hard shot would be steered on into the net. So with both hands together, the contact normal is taken from the middle of
+// the two palms instead, and always faces back toward the field.
+// ball: the ball's centre at contact; a, b: the two palm centres there. Returns a unit vector.
+export function pairNormal(ball, a, b) {
+  const n = [ball[0] - (a[0] + b[0]) / 2, ball[1] - (a[1] + b[1]) / 2, ball[2] - (a[2] + b[2]) / 2];
+  if (!(len(n) > 1e-6)) return [0, 0, -1];
+  const u = n.map((x) => x / len(n));
+  if (u[2] > -0.5) u[2] = -0.5; // the W faces the field: a ball between the hands never leaves sideways or forward
+  const l = len(u);
+  return u.map((x) => x / l);
 }
 
 // The ball meets the glove(s). ballV, gloveV: velocities (m/s, eye frame). normal: from the glove to the ball at contact.

@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { crossedLine, GLOVE, KeeperScore, meetGlove, SAVE, sweepGlove } from '../src/core/goalkeeping.js';
+import { crossedLine, GLOVE, KeeperScore, meetGlove, pairNormal, SAVE, sweepGlove } from '../src/core/goalkeeping.js';
 import { ballPosition, FIELD, flightMs, PHYS, SPEED_OPTIONS } from '../src/core/ball-path.js';
 import { startRoll, stepRoll } from '../../src/core/ball-path.js';
 
@@ -125,10 +125,12 @@ function playShot(d, kmh, gloves, fps = 72) {
         if (hit && (!best || hit.t < best.t)) best = hit;
       }
       if (best) {
-        const res = meetGlove(roll.v, [0, 0, 0], best.normal, gloves.palms.length === 2);
+        const together = gloves.palms.length === 2;
+        const n = together ? pairNormal(best.ball, gloves.palms[0], gloves.palms[1]) : best.normal;
+        const res = meetGlove(roll.v, [0, 0, 0], n, together);
         touched = res.kind;
         if (res.kind === SAVE.CATCH) return SAVE.CATCH;
-        roll.p = best.ball.map((x, j) => x + best.normal[j] * 0.01);
+        roll.p = best.ball.map((x, j) => x + n[j] * 0.01);
         roll.v = res.v;
       }
     }
@@ -140,10 +142,10 @@ function playShot(d, kmh, gloves, fps = 72) {
   return touched ?? 'stopped';
 }
 
-// Where the shot passes the keeper's hands (z = -0.8): where a keeper who read it would put the gloves.
-function passPoint(d, kmh) {
+// Where the shot passes the keeper's hands (z = -0.8 by default): where a keeper who read it would put the gloves.
+function passPoint(d, kmh, z = -0.8) {
   const r = startRoll((u) => ballPosition(u, d.lane, d.curve, d.height, kmh, d.dip), flightMs(d.height, kmh), 0.5, true);
-  while (r.p[2] < -0.8 && !r.rest) stepRoll(r, 0.002);
+  while (r.p[2] < z && !r.rest) stepRoll(r, 0.002);
   return r.p.slice();
 }
 
@@ -160,8 +162,20 @@ test('two hands put where the shot passes save every shot: caught when it can be
       const p = passPoint(d, kmh);
       const res = playShot(d, kmh, { palms: [[p[0] - 0.12, p[1], -0.8], [p[0] + 0.12, p[1], -0.8]] });
       assert.ok(res === SAVE.CATCH || res === SAVE.PARRY, `${res} for ${JSON.stringify({ kmh, d })}`);
-      if (kmh <= 70) assert.equal(res, SAVE.CATCH, `a ${kmh} km/h shot into two hands is held`);
-      if (kmh >= 110) assert.equal(res, SAVE.PARRY, `a ${kmh} km/h shot is too hot to hold`);
+      if (kmh <= 110) assert.equal(res, SAVE.CATCH, `a ${kmh} km/h shot into two hands is held`);
+      if (kmh >= 130) assert.equal(res, SAVE.PARRY, `a ${kmh} km/h shot is too hot to hold`);
+    }
+  }
+});
+
+test('hands close in, under half a metre from the eyes (where the PC control and a real keeper hold them), save every shot too', () => {
+  const z = -0.48;
+  for (const { kmh } of SPEED_OPTIONS) {
+    for (const d of SHOTS) {
+      const p = passPoint(d, kmh, z);
+      const res = playShot(d, kmh, { palms: [[p[0] - 0.155, p[1], z], [p[0] + 0.155, p[1], z]] });
+      assert.ok(res === SAVE.CATCH || res === SAVE.PARRY, `${res} for ${JSON.stringify({ kmh, d })}`);
+      if (kmh <= 110) assert.equal(res, SAVE.CATCH, `a ${kmh} km/h shot into two hands is held`);
     }
   }
 });

@@ -48,11 +48,13 @@ test('the goal is behind the chair, the striker outside the area, the ball in fr
 });
 
 // ---------------------------------------------------------------- flight
-test('flight times: a half-second fast shot, slower ones take longer, all finite', () => {
+test('flight times: a hard default, a rocket at the top, slower ones take longer, all finite', () => {
   const ms = SPEED_OPTIONS.map((s) => flightMs(0, s.kmh));
   for (let i = 1; i < ms.length; i++) assert.ok(ms[i] < ms[i - 1], 'faster shots arrive sooner');
-  assert.ok(ms.at(-1) > 450 && ms.at(-1) < 620, `fast = ${ms.at(-1)}`);
-  assert.ok(ms[0] > 900 && ms[0] < 1400, `gentle = ${ms[0]}`);
+  assert.ok(ms.at(-1) > 330 && ms.at(-1) < 450, `pro = ${ms.at(-1)}`);
+  const hard = flightMs(0, DEFAULT_KMH);
+  assert.ok(hard > 450 && hard < 620, `default = ${hard}`);
+  assert.ok(ms[0] > 650 && ms[0] < 900, `gentle = ${ms[0]}`);
   assert.ok(ms.every(Number.isFinite));
 });
 test('the default speed is one of the options', () => assert.ok(SPEED_OPTIONS.some((s) => s.kmh === DEFAULT_KMH)));
@@ -135,7 +137,7 @@ test('malformed shot parameters give a finite ball', () => {
 });
 test('speed is clamped: nobody can ask for an impossible shot', () => {
   assert.equal(flightMs(0, 1), flightMs(0, 30));
-  assert.equal(flightMs(0, 9999), flightMs(0, 130));
+  assert.equal(flightMs(0, 9999), flightMs(0, 150));
 });
 
 // ---------------------------------------------------------------- deliveries

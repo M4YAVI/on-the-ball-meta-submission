@@ -6,5 +6,5 @@ export const FOOTBALL_SKIN = Object.freeze({
   intro: 'You are in goal. Twenty shots. ',
   headHint: 'Keep the amber dot on the ball and stop it with your gloves.',
   eyeHint: "Watch the glow at the striker's foot, follow the ball with your eyes, and block it with your gloves.",
-  speedDefault: 'Easy 70 km/h',
+  speedDefault: 'Hard 110 km/h',
 });

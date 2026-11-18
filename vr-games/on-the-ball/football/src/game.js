@@ -20,11 +20,11 @@ import { Rays } from '../../src/xr/rays.js';
 import { Sfx } from '../../src/xr/audio.js';
 import { Ui } from '../../src/xr/ui.js';
 import { COLORS } from '../../src/xr/theme.js';
-import { ballPosition, flightMs, makeDeliveries, PATH, PHYS, SPEED_OPTIONS } from './core/ball-path.js';
+import { ballPosition, DEFAULT_KMH, flightMs, makeDeliveries, PATH, PHYS, SPEED_OPTIONS } from './core/ball-path.js';
 import { FootballScene } from './xr/football-scene.js';
 import { BallRig } from './xr/ball.js';
 import { FOOTBALL_SKIN } from './skin.js';
-import { crossedLine, GLOVE, KeeperScore, meetGlove, SAVE, sweepGlove } from './core/goalkeeping.js';
+import { crossedLine, GLOVE, KeeperScore, meetGlove, pairNormal, SAVE, sweepGlove } from './core/goalkeeping.js';
 import { MouseGloves, PlayerGloves } from './xr/gloves.js';
 import { SaveCallout } from './xr/save-callout.js';
 
@@ -33,7 +33,7 @@ const GLOVE_PHASES = new Set([PHASE.READY, PHASE.PLAYING, PHASE.BETWEEN, PHASE.P
 const SAVE_LINGER = 0.6; // s after a save (or a catch) before the shot is closed and the next one is set up
 const SWISH_SPEED = 4.5; // m/s: a hand moving this fast (a dive, a punch) whooshes
 
-const LEAD_IN = 1.0; // s: the striker settles over the ball and draws his foot back before he hits it
+const LEAD_IN = 1.75; // s: the striker takes his run-up (see RUN in xr/football-scene.js, it starts 1.55 s out) and draws his foot back
 const GAP = 2.2; // s between deliveries
 const TOLERANCE = BASE_TOLERANCE.base; // 7 deg near the centre; eye mode widens it toward the edge (core/engine.js toleranceFor)
 const CAL_ANGLE = 14; // degrees to each side for the calibration dots
@@ -257,9 +257,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
   loadSpeed() {
     try {
       const id = JSON.parse(this.storage?.getItem(PREFS_KEY) ?? '{}').speed;
-      return SPEED_OPTIONS.find((s) => s.id === id) ?? SPEED_OPTIONS[1];
+      return SPEED_OPTIONS.find((s) => s.id === id) ?? SPEED_OPTIONS.find((s) => s.kmh === DEFAULT_KMH);
     } catch (_) {
-      return SPEED_OPTIONS[1];
+      return SPEED_OPTIONS.find((s) => s.kmh === DEFAULT_KMH);
     }
   }
   loadGuide() {
@@ -874,7 +874,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       gv = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
     }
     const v = c.roll.v;
-    const res = meetGlove(v, gv, best.hit.normal, together);
+    // two hands together are one surface: the bounce is off the pair, not off the edge of the palm touched first
+    const ft = f0 + (f1 - f0) * best.hit.t;
+    const n = together ? pairNormal(best.hit.ball, at(g.left, ft), at(g.right, ft)) : best.hit.normal;
+    const res = meetGlove(v, gv, n, together);
     const speed = Math.hypot(v[0] - gv[0], v[1] - gv[1], v[2] - gv[2]);
     c.touched = true;
     c.deflect = res.kind;
@@ -883,6 +886,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.anchor.localToWorld(this.world3);
     this.sfx.play('glove', 0.4 + 0.4 * Math.min(1, speed / 30), { kmh: Math.max(60, speed * 3.6), pos: this.world3 });
     g.pulse(together ? 'both' : best.gl.side, Math.min(1, 0.55 + speed / 50), res.kind === SAVE.CATCH ? 60 : 45);
+    if (res.kind !== SAVE.CATCH) g.react(together ? 'both' : best.gl.side, time); // the fingers spring wide (a catch closes them)
     if (import.meta.env.DEV) {
       console.info(`[otb] glove ${together ? 'both' : best.gl.side} ${res.kind} ball=${speed.toFixed(1)}m/s hand=${Math.hypot(...gv).toFixed(1)}m/s out=[${res.v.map((x) => x.toFixed(1)).join(',')}]`);
     }
@@ -893,7 +897,6 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       return true;
     }
     // Off the glove: from the contact point, just clear of the palm, with its new velocity.
-    const n = best.hit.normal;
     c.roll.p = [cp[0] + n[0] * 0.01, cp[1] + n[1] * 0.01, cp[2] + n[2] * 0.01];
     c.roll.v = res.v;
     c.roll.rest = false;
@@ -919,7 +922,6 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.callout.show(res);
     if (res.saved) {
       this.savedOnce = true;
-      this.sfx.play('cheer', kind === SAVE.PARRY ? 0.25 : 0.35);
     } else {
       this.sfx.play('bounce', 0.3); // into the net
     }
@@ -948,6 +950,10 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     if (!on) this.mouseGloves.reset();
     this.mouseGloves.showHint(on && !this.savedOnce);
     this.gloves.update(this.anchor, dt, time);
+    // the hands: open wide from the striker's last steps until the shot is decided, cupped round a held ball
+    const c = this.cur;
+    this.gloves.setAlert(!!c && !c.decided && !c.caught && time >= c.t0 - 0.45);
+    this.gloves.setHold(!!c?.caught || !!this.held);
     // a dive or a punch whooshes
     for (const gl of this.gloves.sides) {
       if (!gl.ok || this.gloves.pcDriven) continue;
@@ -970,8 +976,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this._dk ??= { left: { p: new Vector3() }, right: { p: new Vector3() } };
     const c = this.cur;
     let x = 0;
-    let y = -0.35;
-    const z = -0.8;
+    let y = -0.2;
+    const z = -0.48; // where a keeper's hands really are: elbows bent, under half a metre in front of the eyes
     if (c?.released) {
       if (c.devPass === undefined) {
         const r = startRoll((u) => ballPosition(u, c.delivery.lane, c.delivery.curve, c.delivery.height, c.kmh, c.delivery.dip), c.dur, 0.5, true);
@@ -982,8 +988,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       y = c.devPass[1];
     } else if (this.held) return { left: { p: this._dk.left.p }, right: { p: this._dk.right.p } }; // hold still with the ball
     if (mode === 'miss') x += x >= 0 ? -0.9 : 0.9;
-    const gapL = mode === 'one' ? 0 : -0.12;
-    const gapR = mode === 'one' ? 0.6 : 0.12;
+    const gapL = mode === 'one' ? 0 : -0.15;
+    const gapR = mode === 'one' ? 0.6 : 0.15;
     // the grip sits behind the palm: put the palm centre (grip + palmOut toward the ball) on the line
     this._dk.left.p.set(x + gapL, y, z + GLOVE.palmOut);
     this._dk.right.p.set(x + gapR, y, z + GLOVE.palmOut);

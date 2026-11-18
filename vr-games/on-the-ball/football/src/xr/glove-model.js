@@ -1,10 +1,10 @@
 // The goalkeeper glove model: drawn only (the save test uses the palm centre in core/goalkeeping.js, never this mesh).
 //
-// Built like a real pro keeper glove: a padded, slightly cupped hand body; a thick latex palm that wraps past the edges; fat
-// "roll finger" fingers (latex wrapped round the sides, the coloured backhand on top) with black protective spines and a
-// slight forward curl; an opposed thumb; a neoprene cuff with a wide wrap strap and a velcro tab. The player mostly sees the
-// BACK of the gloves (the palms face the striker), so the backhand carries the design: white, a bold cyan-to-blue sweep, a
-// black embossed punch zone over the knuckles, stitching round the edge.
+// Built like a real pro keeper glove: a padded, slightly cupped hand body; a thick latex palm that wraps past the edges; long,
+// fat "roll finger" fingers (latex wrapped round the sides, white on top) with a slight forward curl; an opposed thumb; a black
+// neoprene cuff with a wide wrap strap and a velcro tab. The player mostly sees the BACK of the gloves (the palms face the
+// striker), so the backhand carries the design, kept clean so it reads at arm's length in a headset: white, a bold
+// cyan-to-blue sweep, a blue knuckle panel, faint stitching. No dark stripes on the fingers: at that size they read as dirt.
 //
 // Local axes: +Y toward the fingertips, +Z out of the palm (toward the ball), -Z out of the back of the hand (toward the
 // player). The origin is the palm centre, which is where the hand's grip pose is, so the glove sits on the hand.
@@ -26,6 +26,7 @@ import {
   SRGBColorSpace,
   TorusGeometry,
 } from '@iwsdk/core';
+import { createSleeveStub, GLOVE_SCALE } from './arm-model.js';
 
 const ACCENT = '#14c8ff';
 const ACCENT_DEEP = '#2448ff';
@@ -120,21 +121,18 @@ function backColor() {
     x.moveTo(0, h * 0.68);
     x.bezierCurveTo(w * 0.35, h * 0.52, w * 0.6, h * 0.4, w, h * 0.2);
     x.stroke();
-    // the punch zone over the knuckles: black, with raised ribs
-    x.fillStyle = '#15181d';
+    // the knuckle panel: a clean blue band across the top of the hand, where the fingers start
+    const k = x.createLinearGradient(0, 0, w, 0);
+    k.addColorStop(0, ACCENT_DEEP);
+    k.addColorStop(1, ACCENT);
+    x.fillStyle = k;
     x.beginPath();
-    x.roundRect(w * 0.06, h * 0.03, w * 0.88, h * 0.2, 26);
+    x.roundRect(w * 0.05, h * 0.04, w * 0.9, h * 0.13, 22);
     x.fill();
-    x.fillStyle = '#2a2f37';
-    for (let i = 0; i < 5; i++) {
-      x.beginPath();
-      x.roundRect(w * 0.12, h * 0.055 + i * h * 0.03, w * 0.76, h * 0.016, 6);
-      x.fill();
-    }
-    // stitching round the edge
+    // stitching round the edge, faint
     x.setLineDash([10, 8]);
-    x.strokeStyle = 'rgba(40,50,70,0.45)';
-    x.lineWidth = 3;
+    x.strokeStyle = 'rgba(60,80,110,0.22)';
+    x.lineWidth = 2.5;
     x.beginPath();
     x.roundRect(w * 0.035, h * 0.03, w * 0.93, h * 0.94, 40);
     x.stroke();
@@ -148,9 +146,9 @@ function backBump() {
     (x, w, h) => {
       x.fillStyle = '#7a7a7a';
       x.fillRect(0, 0, w, h);
-      x.fillStyle = '#b8b8b8'; // the punch zone's ribs stand up
-      for (let i = 0; i < 5; i++) x.fillRect(w * 0.12, h * 0.055 + i * h * 0.03, w * 0.76, h * 0.016);
-      x.strokeStyle = '#4a4a4a'; // seams sink in
+      x.fillStyle = '#9a9a9a'; // the knuckle panel is a little raised
+      x.fillRect(w * 0.05, h * 0.04, w * 0.9, h * 0.13);
+      x.strokeStyle = '#5a5a5a'; // seams sink in
       x.lineWidth = 2;
       x.strokeRect(w * 0.035, h * 0.03, w * 0.93, h * 0.94);
     },
@@ -346,12 +344,13 @@ function finger(len, r, curl) {
   const g = new Group();
   const a = len * 0.56;
   const b = len * 0.5;
-  g.add(segment(a, r, true));
+  g.add(segment(a, r, false));
   const tip = new Group();
   tip.position.y = a - r * 0.9;
   tip.rotation.x = curl;
-  tip.add(segment(b, r * 0.96, true));
+  tip.add(segment(b, r * 0.96, false));
   g.add(tip);
+  g.userData.tip = tip;
   return g;
 }
 
@@ -369,46 +368,69 @@ export function createGloveModel(side = 'left') {
   root.add(new Mesh(S.body, S.back), new Mesh(S.palm, S.latex));
 
   // fingers: index (thumb side) to little finger; a real glove's spread, lengths and a little fan
+  // (long, fat "roll" fingers: a keeper glove's fingers are well past the hand's own)
   const fingers = [
-    { x: 0.0375, y: 0.043, len: 0.074, r: 0.0128, fan: -0.07, curl: 0.2 },
-    { x: 0.0126, y: 0.047, len: 0.082, r: 0.0131, fan: -0.015, curl: 0.18 },
-    { x: -0.0126, y: 0.045, len: 0.077, r: 0.0127, fan: 0.035, curl: 0.2 },
-    { x: -0.0375, y: 0.037, len: 0.063, r: 0.0116, fan: 0.1, curl: 0.24 },
+    { x: 0.0375, y: 0.043, len: 0.084, r: 0.0137, fan: -0.08, curl: 0.16 },
+    { x: 0.0126, y: 0.047, len: 0.093, r: 0.014, fan: -0.02, curl: 0.14 },
+    { x: -0.0126, y: 0.045, len: 0.088, r: 0.0136, fan: 0.04, curl: 0.16 },
+    { x: -0.0375, y: 0.037, len: 0.072, r: 0.0125, fan: 0.11, curl: 0.2 },
   ];
-  for (const f of fingers) {
+  const rigFingers = [];
+  for (const [i, f] of fingers.entries()) {
     const g = finger(f.len, f.r, f.curl);
     g.position.set(sign * f.x, f.y, -0.002);
     g.rotation.z = sign * f.fan; // index leans to the thumb side, little finger away from it
     g.rotation.x = 0.06;
     root.add(g);
+    // the index (i = 0) fans toward the thumb and the little finger (i = 3) away from it when the hand opens wide
+    rigFingers.push({ g, tip: g.userData.tip, fan: f.fan, curl: f.curl, open: (i - 1.5) * 0.12 });
   }
 
   // the thumb: low on the thumb side, angled out and turned in toward the palm, curled at the tip
   const thumb = new Group();
   thumb.position.set(sign * 0.047, -0.016, 0.003);
   thumb.rotation.set(0.42, sign * -0.25, sign * -0.72);
-  thumb.add(segment(0.04, 0.0142, true));
+  thumb.add(segment(0.044, 0.0148, false));
   const tt = new Group();
-  tt.position.y = 0.04 - 0.012;
+  tt.position.y = 0.044 - 0.012;
   tt.rotation.x = 0.28;
-  tt.add(segment(0.034, 0.0136, true));
+  tt.add(segment(0.038, 0.0142, false));
   thumb.add(tt);
   root.add(thumb);
+
+  // The arm's sleeve comes out of the cuff, straight, and the arm itself joins it (see arm-model.js).
+  root.add(createSleeveStub());
+
+  // Pose the hand. curl: [thumb, index, middle, ring, little], each 0 (open) ... 1 (closed round a ball). spread: 0 (relaxed) ...
+  // 1 (fingers fanned wide, ready). Cheap: only rotations of a few groups.
+  root.userData.setPose = (curl, spread) => {
+    for (let i = 0; i < 4; i++) {
+      const f = rigFingers[i];
+      const c = curl[i + 1];
+      f.g.rotation.x = 0.06 + c * 1.12;
+      f.tip.rotation.x = f.curl + c * 1.25;
+      f.g.rotation.z = sign * (f.fan + f.open * spread);
+    }
+    const c = curl[0];
+    thumb.rotation.x = 0.42 + c * 0.55;
+    thumb.rotation.z = sign * (-0.72 + c * 0.95 - spread * 0.14);
+    tt.rotation.x = 0.28 + c * 0.75;
+  };
+  root.userData.setPose([0, 0, 0, 0, 0], 0);
+  root.scale.setScalar(GLOVE_SCALE);
 
   // the wrist: neoprene cuff, the wide wrap strap, its velcro tab with the patch (on the back, readable from behind), a rim
   const cuff = new Mesh(S.cuff, S.knit);
   cuff.position.set(0, -0.083, -0.013);
   const band = new Mesh(S.strapBand, S.strap);
   band.position.set(0, -0.068, -0.013);
-  const rim = new Mesh(S.rim, S.accent);
-  rim.position.set(0, -0.12, -0.013);
   const tab = new Mesh(S.tab, S.spine);
   tab.position.set(-sign * 0.006, -0.068, -0.0476); // inner face just inside the strap's back (-0.0472): flush, not sticking out
   tab.rotation.set(0, Math.PI, sign * 0.06);
   const patch = new Mesh(S.patchPlane, S.patch);
   patch.position.set(-sign * 0.006, -0.068, -0.054); // just outside the tab's outer face (-0.0536)
   patch.rotation.set(0, Math.PI, sign * 0.06); // faces -Z: the player reads it the right way round
-  root.add(cuff, band, rim, tab, patch);
+  root.add(cuff, band, tab, patch);
 
   return root;
 }

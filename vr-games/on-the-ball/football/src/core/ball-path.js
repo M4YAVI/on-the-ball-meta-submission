@@ -54,17 +54,19 @@ export const PHYS = Object.freeze({
   ballRadius: 0.11, // a size-5 football is 22 cm across
 });
 
-// Release speeds a keeper really faces (amateur to strong). Scores at different speeds are not comparable, so the speed id is
-// stored with each session. "Fast" is the deck's half-second ball.
+// Release speeds a keeper really faces, from a decent amateur to a hard professional strike from the edge of the area. Scores at
+// different speeds are not comparable, so the speed id is stored with each session. The default is a hard 110 km/h shot, about
+// 0.55 s from boot to hands; "Fast" is the deck's half-second ball and "Pro" is a rocket (about 0.35 s).
 export const SPEED_OPTIONS = Object.freeze([
-  { id: 'gentle', kmh: 50, label: 'Gentle 50 km/h' },
-  { id: 'easy', kmh: 70, label: 'Easy 70 km/h' },
-  { id: 'medium', kmh: 90, label: 'Medium 90 km/h' },
-  { id: 'fast', kmh: 110, label: 'Fast 110 km/h' },
+  { id: 'gentle', kmh: 70, label: 'Gentle 70 km/h' },
+  { id: 'easy', kmh: 90, label: 'Easy 90 km/h' },
+  { id: 'medium', kmh: 110, label: 'Hard 110 km/h' },
+  { id: 'fast', kmh: 130, label: 'Fast 130 km/h' },
+  { id: 'pro', kmh: 150, label: 'Pro 150 km/h' },
 ]);
-export const DEFAULT_KMH = 70;
+export const DEFAULT_KMH = 110;
 
-const cleanKmh = (kmh) => clamp(Number.isFinite(kmh) ? kmh : DEFAULT_KMH, 30, 130);
+const cleanKmh = (kmh) => clamp(Number.isFinite(kmh) ? kmh : DEFAULT_KMH, 30, 150);
 const num = (v, fallback = 0) => (Number.isFinite(v) ? v : fallback);
 
 // Arrival height above the eyes for a height value in -1 ... +1.

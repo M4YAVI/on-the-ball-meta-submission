@@ -38,6 +38,7 @@ import {
 
 import { FIELD, PATH, PHYS } from '../core/ball-path.js';
 import { footballTexture } from './ball.js';
+import { mergeStatic } from '../../../src/xr/merge-static.js';
 
 export const GROUND = FIELD.ground; // metres below the eyes
 
@@ -52,6 +53,24 @@ const LINE = 0.14; // painted line width, metres (a little wider than the real 1
 
 // How the kicker's leg moves around the strike. Seconds relative to the moment the ball leaves the foot.
 const KICK = Object.freeze({ start: -0.42, wind: -0.1, contact: 0, end: 0.5 });
+
+// The run-up before it, same clock. He starts a few metres back and to the side, jogs in on a diagonal like a real striker (turning
+// his body to the ball as he arrives), the stride settles into the plant, and the kick above takes over. After the strike he
+// carries on forward one step. Offsets are metres from where he stands when he hits it; x is the keeper's right (his left).
+const RUN = Object.freeze({
+  start: -1.55, // s: he starts moving
+  end: -0.25, // s: he has arrived beside the ball
+  fromX: 1.7,
+  fromZ: -3.7, // behind the ball, so the run is toward the keeper
+  cadence: 1.45, // full leg cycles per second (about 2.9 steps a second, a jog)
+  fadeFrom: -0.66, // s: the stride starts to settle...
+  fadeTo: -0.42, // ...and is gone when the kick's draw-back begins
+  followThrough: 0.55, // m he carries on forward after the strike
+});
+const smooth = (u) => {
+  const x = Math.min(1, Math.max(0, u));
+  return x * x * (3 - 2 * x);
+};
 
 function seeded(seed) {
   let s = seed;
@@ -281,6 +300,8 @@ export class FootballScene {
     this.buildPitch();
     this.buildGoal();
     this.buildStadium();
+    // the pitch, the goal and the stands never move: one draw call per material (Quest budget; src/xr/merge-static.js)
+    this.mergedCalls = mergeStatic(this.root);
     this.buildBall();
     this.loadStriker();
   }
@@ -495,6 +516,44 @@ export class FootballScene {
     this.thigh = model.getObjectByName('thigh_r');
     this.calf = model.getObjectByName('calf_r');
     this.thighL = model.getObjectByName('thigh_l');
+    this.calfL = model.getObjectByName('calf_l');
+    this.armR = model.getObjectByName('upperarm_r');
+    this.armL = model.getObjectByName('upperarm_l');
+    this.spine = model.getObjectByName('spine_01');
+    this.baseY = holder.position.y;
+  }
+
+  // Where the striker is, which way he faces, and how hard his legs are working, at t seconds from the strike. Pure: the same t
+  // always gives the same pose, so a paused or replayed shot cannot drift.
+  static runPose(t) {
+    const out = { x: 0, z: 0, yaw: 0, phase: 0, amp: 0, bob: 0, lean: 0 };
+    if (t == null || !Number.isFinite(t)) return out;
+    const { start, end, fromX, fromZ, cadence, fadeFrom, fadeTo, followThrough } = RUN;
+    if (t >= 0) {
+      out.z = followThrough * (1 - (1 - Math.min(1, t / 0.55)) ** 2); // a step on, slowing
+      out.yaw = -0.08 * smooth(t / 0.5);
+      return out;
+    }
+    if (t <= start) {
+      const heading = Math.atan2(-fromX, -fromZ);
+      out.x = fromX;
+      out.z = fromZ;
+      out.yaw = heading;
+      return out;
+    }
+    const s = Math.min(1, (t - start) / (end - start));
+    const f = 0.4 * s + 0.6 * smooth(s); // jogs off, eases into the ball
+    out.x = fromX * (1 - f);
+    out.z = fromZ * (1 - f);
+    const heading = Math.atan2(-fromX, -fromZ);
+    out.yaw = heading * (1 - smooth((t + 0.78) / 0.5)) - 0.08 * smooth((t + 0.5) / 0.5); // body turns square to the ball as he plants
+    out.phase = 2 * Math.PI * cadence * (t - start);
+    const up = smooth((t - start) / 0.3);
+    const down = 1 - smooth((t - fadeFrom) / (fadeTo - fadeFrom));
+    out.amp = up * down;
+    out.bob = Math.abs(Math.sin(out.phase)) * out.amp;
+    out.lean = out.amp * 0.12 * (1 - smooth((t + 0.8) / 0.3) * 0.6);
+    return out;
   }
 
   // tRel: seconds relative to the moment the ball leaves the foot (negative before, positive after); null = standing.
@@ -519,6 +578,24 @@ export class FootballScene {
   update(dt) {
     if (this.mixer) this.mixer.update(dt);
     const t = this.deliveryT;
+    if (this.striker) {
+      const r = FootballScene.runPose(t);
+      this.striker.position.set(r.x, this.baseY + r.bob * 0.035, FIELD.strikerZ + r.z);
+      this.striker.rotation.y = r.yaw;
+      if (this.thigh && r.amp > 0.001) {
+        // Opposite legs: one forward while the other is back. The knee folds most as the leg comes through, and the foot stays
+        // lifted on the way back, like a jog. Arms swing against the legs and the body leans into the run.
+        const stride = (phase, thigh, calf) => {
+          if (thigh) thigh.rotation.x += Math.sin(phase) * 0.62 * r.amp * FootballScene.LEG_SIGN;
+          if (calf) calf.rotation.x += (0.12 + Math.max(0, Math.cos(phase)) * 0.85) * r.amp * 1.1 * FootballScene.KNEE_SIGN;
+        };
+        stride(r.phase, this.thigh, this.calf);
+        stride(r.phase + Math.PI, this.thighL, this.calfL);
+        if (this.armR) this.armR.rotation.x += Math.sin(r.phase + Math.PI) * 0.5 * r.amp * FootballScene.ARM_SIGN;
+        if (this.armL) this.armL.rotation.x += Math.sin(r.phase) * 0.5 * r.amp * FootballScene.ARM_SIGN;
+        if (this.spine) this.spine.rotation.x += r.lean * FootballScene.LEAN_SIGN;
+      }
+    }
     if (this.thigh && t != null) {
       const { swing, knee } = FootballScene.legSwing(t);
       if (swing !== 0 || knee !== 0) {
@@ -534,3 +611,5 @@ export class FootballScene {
 // Which way the skeleton's X axis swings a leg forward / bends a knee. Checked against the model (see tests/screens).
 FootballScene.LEG_SIGN = 1;
 FootballScene.KNEE_SIGN = 1;
+FootballScene.ARM_SIGN = 1;
+FootballScene.LEAN_SIGN = 1;
