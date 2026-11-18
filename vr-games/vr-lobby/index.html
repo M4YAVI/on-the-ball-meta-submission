@@ -29,6 +29,7 @@
         transition: opacity 0.3s ease;
       }
 
+      /* dev-only:start */
       /* Responsive UI & Menu Styles */
       #emulator-toggle-btn {
         position: fixed;
@@ -129,6 +130,7 @@
           font-size: 12px;
         }
       }
+      /* dev-only:end */
 
       /* Enter VR Button */
       #enter-vr-btn {
@@ -198,6 +200,7 @@
 
     <script type="module" src="/src/index.js"></script>
 
+    <!-- dev-only:start -->
     <!-- Hamburger button to toggle Emulator Menu -->
     <button
       id="emulator-toggle-btn"
@@ -219,13 +222,13 @@
       </div>
       <span class="switcher-section-title" style="margin-top:4px;">Quick Launch</span>
       <div class="switcher-row">
-        <a id="link-cricket" href="https://localhost:8081/?autoxr=1" class="switcher-btn" style="background:#4338ca;color:#ffffff;">🏏 Cricket Catch</a>
         <a id="link-baseball" href="https://localhost:8082/?autoxr=1" class="switcher-btn" style="background:#059669;color:#ffffff;">⚾ Glove Up</a>
         <a id="link-bulb" href="https://localhost:8083/?autoxr=1" class="switcher-btn" style="background:#d97706;color:#ffffff;">💡 Bulb Rush</a>
         <a id="link-ontheball" href="https://localhost:8084/?autoxr=1" class="switcher-btn" style="background:#0f766e;color:#ffffff;">🎯 ON THE BALL</a>
       </div>
     </div>
 
+    <!-- dev-only:end -->
     <!-- Enter VR Button (Only displayed when WebXR immersive-vr is supported by the browser) -->
     <button
       id="enter-vr-btn"
@@ -236,6 +239,7 @@
       <span>ENTER VR</span>
     </button>
 
+    <!-- dev-only:start -->
     <script>
       function toggleEmulatorSwitcher() {
         const sw = document.getElementById('iwsdk-device-switcher');
@@ -287,10 +291,8 @@
         const loc = window.location;
         if (loc.port !== '8080') {
           const basePath = loc.pathname.replace(/\/$/, '');
-          const cricketLink = document.getElementById('link-cricket');
           const baseballLink = document.getElementById('link-baseball');
           const bulbLink = document.getElementById('link-bulb');
-          if (cricketLink) cricketLink.href = basePath + '/cricket/?autoxr=1';
           if (baseballLink) baseballLink.href = basePath + '/baseball/?autoxr=1';
           if (bulbLink) bulbLink.href = basePath + '/bulb/?autoxr=1';
           const otbLink = document.getElementById('link-ontheball');
@@ -298,5 +300,6 @@
         }
       })();
     </script>
+    <!-- dev-only:end -->
   </body>
 </html>

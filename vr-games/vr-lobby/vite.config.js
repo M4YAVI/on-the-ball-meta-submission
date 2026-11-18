@@ -5,11 +5,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
 import { defineConfig } from 'vite';
+import { stripDevOnlyHtml } from '../strip-dev-only-html.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Ports must match `port` in src/config.js: the tiles open these directly.
 const GAME_SERVERS = [
-  { dir: 'cricket-xr', port: 8081 },
   { dir: 'baseball-xr', port: 8082 },
   { dir: 'bulb-rush-xr', port: 8083 },
 ];
@@ -54,18 +54,12 @@ function startGameServers() {
 }
 
 export default defineConfig({
-  plugins: [iwsdkDev(), startGameServers()],
+  plugins: [iwsdkDev(), startGameServers(), stripDevOnlyHtml()],
   server: {
     host: '0.0.0.0',
     port: 8080,
     open: false,
     proxy: {
-      '/cricket': {
-        target: 'http://localhost:8081',
-        changeOrigin: true,
-        ws: true,
-        rewrite: (path) => path.replace(/^\/cricket/, ''),
-      },
       '/baseball': {
         target: 'http://localhost:8082',
         changeOrigin: true,
