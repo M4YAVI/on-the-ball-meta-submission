@@ -41,8 +41,9 @@ const SWISH_SPEED = 7.5; // m/s at the sweet spot: a swing this fast whooshes
 // Forgiving contact size: metres added to the ball's radius in the bat test, so a ball that just grazes past still counts. It
 // is a slightly bigger target, not aim assist: the bat and the ball are never moved toward each other. The PC control gets more
 // because a wheel is cruder than an arm.
-const HIT_PAD = 0.02;
-const PC_HIT_PAD = 0.05;
+const HIT_PAD = 0.035;
+const PC_HIT_PAD = 0.09;
+const PAST_BATSMAN_Z = 0.05; // m: a ball this far behind the eyes has passed the batsman and can no longer be played
 // The bat is in hand on these screens: practice swings before the first ball, every delivery, and the pause.
 const BAT_PHASES = new Set([PHASE.READY, PHASE.PLAYING, PHASE.BETWEEN, PHASE.PAUSED]);
 
@@ -116,8 +117,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     // Desktop emulator only: the mouse stands in for the hand (a headset never uses this).
     this.mouseBat = new MouseBat(this.world);
     this.anchor.add(this.mouseBat.hint);
-    this.bat.override = () => this.mouseBat.pose(this.anchor);
-    this.cleanupFuncs.push(() => this.mouseBat.dispose());
+    this.bat.override = () => this.mouseBat.pose(this.anchor);    this.cleanupFuncs.push(() => this.mouseBat.dispose());
 
     this.eyeAvailable = false;
     this.eyeNote = '';
@@ -710,6 +710,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         return;
       }
       this.placeRoll(c.roll, dt);
+      // DEV: the simulated player keeps watching the ball onto the bat after its scored arrival point, as a batsman does
+      if (import.meta.env.DEV && window.__otb?.autopilot && c.roll.p[2] < -0.3) this.devAutopilot(1);
       if (c.roll.p[2] >= 1.0 || c.roll.rest) this.finishBall(time);
       return;
     }
@@ -803,6 +805,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     c.prev = [p[0], p[1], p[2]];
     const bat = this.bat;
     if (!prev || !bat.pose || !bat.prevPose) return false;
+    // A ball that has gone past the batsman is gone: it does not click off a bat held up behind him (that read as an "edge" from
+    // a ball nobody played). The same for the PC bat while it is still lifted behind, before the swing comes down.
+    if (p[2] > PAST_BATSMAN_Z || (bat.pcDriven && this.mouseBat.th < 0 && p[2] > -0.6)) return false;
     const r = PHYS.ballRadius + (bat.pcDriven ? PC_HIT_PAD : HIT_PAD);
     const contact = sweepHit(bat.prevPose, bat.pose, prev, p, r);
     if (!contact) return false;
@@ -814,7 +819,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     // swing still decides the direction and whether it qualifies. Anything else flies by plain physics.
     const batSpeed = Math.min(Math.hypot(...batV), HIT.maxBatSpeed);
     const timing = timingOf(contact.ball[2]);
-    const big = perfectLaunch(res.v, timing, res, batSpeed);
+    const big = perfectLaunch(res.v, timing, res, batSpeed, batV);
     if (big) res = { ...res, v: big };
     const kmh = Math.hypot(res.v[0], res.v[1], res.v[2]) * 3.6;
     c.hit = { st: launch(start, res.v), res, at: time, kmh, said: null, timing, perfect: !!big };
@@ -842,7 +847,6 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     h.said = kind;
     if (import.meta.env.DEV) console.info(`[otb] shot ${kind}${h.perfect ? ' (perfect timing)' : ''}`);
     this.callout.show(kind, h.kmh);
-    if (boundary) this.sfx.play('cheer', kind === 'six' ? 0.5 : 0.38);
   }
 
   placeBatted(st, dt) {
@@ -856,8 +860,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const on = BAT_PHASES.has(this.flow.phase);
     this.bat.setEnabled(on);
     this.meter.setEnabled(on && !!this.world.session);
-    if (!on) this.mouseBat.reset();
-    this.mouseBat.showHint(on && !this.hitOnce);
+    if (!on) this.mouseBat.reset();    this.mouseBat.showHint(on && !this.hitOnce);
     if (!this.bat.update(this.anchor, dt, time)) return;
     const sp = this.bat.tipSpeed(time);
     if (sp > SWISH_SPEED && time - this.swishAt > 0.5) {

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 import { Trial, angle, tally, STATUS, SAMPLE, TOLERANCE, toleranceFor } from '../src/core/engine.js';
 import { GazeVerdict, VERDICT, CalibrationCheck, CAL } from '../src/core/gaze-verdict.js';
-import { ballPosition, bounceT, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, flight, flightMs, FIELD, FOV, PATH, PHYS, SPEED_OPTIONS } from '../src/core/ball-path.js';
+import { ballPosition, crossesStumpsAt, bounceT, viewAngles, pathFitsView, makeDeliveries, drawnRadius, ringRadius, flight, flightMs, FIELD, FOV, PATH, PHYS, SPEED_OPTIONS } from '../src/core/ball-path.js';
 import { GameFlow, PHASE, MODE, SPORTS } from '../src/core/flow.js';
 import { HistoryStore, HISTORY_KEY } from '../src/core/history.js';
 
@@ -286,19 +286,38 @@ test('no delivery ever drops more than 25 degrees below eye level (comfortable e
   const f = flight(1, 140);
   assert.ok(f.t2 > 0.02 && f.endZ > -2.4 && f.endZ > f.zb, 'it still pitches and comes on toward the bat');
 });
-test('side deliveries keep their full 16 degree angle at every speed and length, even when they end early', () => {
+test('every lane is a fair ball: it crosses the stumps on the leg stump, middle stump or outside off, never a wide, at every speed and length', () => {
+  const LEG_STUMP = 0.114; // half the width of the stumps (22.86 cm)
+  const WIDE_GUIDE = 0.89; // the wide guideline either side of middle stump
   for (const s of SPEED_OPTIONS) {
     for (const len of [-1, 0, 1]) {
-      const h = viewAngles(ballPosition(1, 1, 0, len, s.kmh)).horizontal;
-      assert.ok(Math.abs(h - PATH.maxLateralDeg) < 0.01, `${s.id} len ${len} ends at ${h} deg`);
+      for (const c of [0, -PATH.maxCurveM / 2]) {
+        const leg = crossesStumpsAt(-1, c, len, s.kmh);
+        assert.ok(leg >= -LEG_STUMP && leg <= LEG_STUMP, `${s.id} len ${len} leg lane crosses at ${leg.toFixed(3)} m: not on the stumps`);
+      }
+      for (const c of [-PATH.maxCurveM, 0, PATH.maxCurveM]) {
+        const mid = crossesStumpsAt(0, c * 0.8, len, s.kmh); // the middle lane swings 80% (makeDeliveries)
+        assert.ok(Math.abs(mid) <= LEG_STUMP, `${s.id} len ${len} middle lane crosses at ${mid.toFixed(3)} m`);
+        const off = crossesStumpsAt(1, c, len, s.kmh);
+        assert.ok(off > LEG_STUMP && off < WIDE_GUIDE, `${s.id} len ${len} off lane crosses at ${off.toFixed(3)} m`);
+      }
     }
   }
 });
-test('a side delivery ends far enough to the side that a straight head misses it but eyes can follow (the eye-tracking case)', () => {
-  for (const lane of [-1, 1]) {
-    const a = viewAngles(ballPosition(1, lane, 0));
-    assert.ok(Math.abs(a.horizontal) > 7 * 2, `lane ${lane} ends at ${a.horizontal} deg`);
+test('no generated delivery is ever a leg-side wide', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    for (const d of makeDeliveries(60, seeded(seed))) {
+      for (const s of SPEED_OPTIONS) {
+        const x = crossesStumpsAt(d.lane, d.curve, d.length, s.kmh);
+        assert.ok(x >= -0.114 && x < 0.89, `seed ${seed} lane ${d.lane} curve ${d.curve} crosses at ${x}`);
+      }
+    }
   }
+});
+test('the off lane ends far enough to the side that a straight head misses it but eyes can follow (the eye-tracking case)', () => {
+  const a = viewAngles(ballPosition(1, 1, 0));
+  assert.ok(a.horizontal > 10, `off lane ends at ${a.horizontal} deg`);
+  assert.ok(viewAngles(ballPosition(1, -1, 0)).horizontal < 0, 'the leg lane is on the other side');
 });
 test('the ball pitches on a length in front of the batsman; full balls pitch closer than short ones', () => {
   const zAt = (len) => ballPosition(bounceT(len), 0, 0, len)[2];
@@ -309,7 +328,7 @@ test('the ball pitches on a length in front of the batsman; full balls pitch clo
 test('left and right lanes end on opposite sides; bad inputs are clamped, not NaN', () => {
   assert.ok(ballPosition(1, -1, 0)[0] < 0);
   assert.ok(ballPosition(1, 1, 0)[0] > 0);
-  assert.equal(ballPosition(1, 0, 0)[0], 0);
+  assert.ok(Math.abs(ballPosition(1, 0, 0)[0]) < 0.05);
   const p = ballPosition(NaN, 99, Infinity);
   assert.ok(p.every(Number.isFinite));
 });
@@ -352,11 +371,12 @@ test('real ball flight: the ball slows in the air and on the bounce, and comes o
   assert.ok(Math.abs(atBounce[1] - (FIELD.ground + PHYS.ballRadius)) < 1e-6, 'it touches the pitch surface');
   assert.ok(Math.abs(atBounce[2] - f.zb) < 1e-6);
 });
-test('the drawn ball never shrinks below a followable size', () => {
+test('the drawn ball never shrinks below a followable size, and is never a giant', () => {
   const far = drawnRadius(18);
-  assert.ok((Math.atan(far / 18) * 180) / Math.PI >= 0.89);
-  assert.equal(drawnRadius(0.2), 0.036); // near the player it is the real size
-  assert.ok(ringRadius(10) > drawnRadius(10));
+  assert.ok((Math.atan(far / 18) * 180) / Math.PI >= 0.34, 'still followable at the bowler');
+  assert.ok(far * 2 < 0.24, `${(far * 2).toFixed(2)} m across in the bowler's hand: not bigger than his head`);
+  for (const d of [0.2, 1.2, 3, 5.5]) assert.equal(drawnRadius(d), 0.036, `${d} m: the real ball where it is played`);
+  assert.ok(ringRadius(10) > 3 * drawnRadius(10), 'the ring stands well clear of the ball');
 });
 test('deliveries: 20 balanced, shuffled, within the swing limit, repeatable from a seed', () => {
   const d = makeDeliveries(20, seeded(3));

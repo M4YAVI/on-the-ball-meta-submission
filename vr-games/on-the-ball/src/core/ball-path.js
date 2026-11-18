@@ -12,9 +12,10 @@
 // a length, loses height and pace on the bounce (a cricket ball keeps about half its downward speed and most of its forward
 // speed), then rises to the batsman and is gone about 1.2 m in front of the eyes, below waist height, where a bat would meet
 // it, or a little earlier if it would otherwise drop more than 25 degrees below eye level (see PATH.arrivalFloorDeg).
-// It never reaches the face. Left / straight / right lanes end up to 16 degrees to the side: far enough that a head held
-// straight is NOT on the ball while the eyes can be (the case eye tracking exists for), and still inside the glasses' 37 / 37
-// / 25 / 43 degree view with a margin.
+// It never reaches the face. The three lanes are all fair balls (no wides): on the leg stump, on the middle stump, and outside
+// off stump (see PATH.legLineM / offLineM). The off lane ends about 11 degrees to the side, far enough that a head held straight
+// is NOT on the ball while the eyes can be (the case eye tracking exists for), and inside the glasses' 37 / 37 / 25 / 43 degree
+// view with a margin.
 
 import { clamp } from './engine.js';
 
@@ -27,7 +28,14 @@ export const PATH = Object.freeze({
   endZ: -1.2, // arrival: where the bat would meet the ball, in front of the batting crease
   bounceZ: -5.0, // a good length pitches about 6 m in front of the batsman's stumps
   lengthSpreadM: 1.5, // full balls pitch up to this much closer, short balls this much further away
-  maxLateralDeg: 16, // sideways angle at arrival for the left / right lanes
+  // Where each lane crosses the batsman's stumps, in metres from middle stump (+ = off side of a right-hander, - = leg side).
+  // Every lane is a LEGAL ball (Laws of Cricket, Law 22: a ball that passes where the striker cannot reach it is a wide):
+  //   left   = on the leg stump (leg stump is 0.114 m from middle). It used to end 16 degrees to the left, about 0.35 m outside
+  //            leg stump: a leg-side wide, which is not a fair ball to bat at.
+  //   middle = on middle stump.
+  //   right  = outside off stump, well inside the 0.89 m wide guideline and within a batsman's reach (a drive, not a leave).
+  legLineM: -0.09,
+  offLineM: 0.41,
   maxCurveM: 0.22, // extra swing in the air
   // Lowest the ball is ever drawn, in degrees below straight ahead. A full ball at pace skids through at knee height and
   // would reach 37 deg down at the bat: past where eyes comfortably rotate (~25 deg), where eye trackers are least accurate,
@@ -213,6 +221,19 @@ export function bounceT(length = 0, kmh = DEFAULT_KMH) {
   return f.t1 / f.total;
 }
 
+// Where a lane crosses the batsman's stumps (see PATH.legLineM / offLineM).
+export function laneLineX(lane = 0) {
+  return lane < 0 ? PATH.legLineM : lane > 0 ? PATH.offLineM : 0;
+}
+
+// Where the ball would cross the batsman's stumps if it carried on as it arrives (the line the umpire judges a wide on).
+export function crossesStumpsAt(lane = 0, curve = 0, length = 0, kmh = DEFAULT_KMH) {
+  const a = ballPosition(1, lane, curve, length, kmh);
+  const b = ballPosition(0.98, lane, curve, length, kmh);
+  const slope = (a[0] - b[0]) / (a[2] - b[2]);
+  return a[0] + slope * (FIELD.batsmanStumpsZ - a[2]);
+}
+
 // Position of the ball at t01 (0 = release, 1 = arrival). lane: -1 left, 0 straight, +1 right. curve: swing in metres.
 // length: -1 short, 0 good, +1 full. kmh: release speed.
 export function ballPosition(t01, lane = 0, curve = 0, length = 0, kmh = DEFAULT_KMH) {
@@ -232,11 +253,12 @@ export function ballPosition(t01, lane = 0, curve = 0, length = 0, kmh = DEFAULT
     y = f.yb + f.vy1 * u - 0.5 * PHYS.g * u * u;
   }
   if (t >= f.total) z = f.endZ; // exact arrival, no rounding drift
-  // Sideways: a straight line from the hand to the lane's end point, plus a swing that peaks mid-flight. The end point keeps
-  // the full lane angle even when the ball arrives early at the floor, so side balls still need the eyes, not a straight head.
+  // Sideways: a straight line from the hand to where the lane crosses the batsman's stumps, plus a swing that peaks mid-flight
+  // and is gone by arrival. The line is fixed in metres at the stumps, so a ball that arrives early at the floor is still on
+  // the same line, never wider.
   const s = (z - PATH.releaseZ) / (f.endZ - PATH.releaseZ);
-  const xEnd = Math.tan((PATH.maxLateralDeg * Math.PI) / 180) * -f.endZ;
-  const x = PATH.releaseX * (1 - s) + l * xEnd * s + c * Math.sin(Math.PI * s);
+  const r = (z - PATH.releaseZ) / (FIELD.batsmanStumpsZ - PATH.releaseZ);
+  const x = PATH.releaseX + (laneLineX(l) - PATH.releaseX) * r + c * Math.sin(Math.PI * s);
   return [x, y, z];
 }
 
@@ -257,8 +279,13 @@ export function pathFitsView(lane, curve, marginDeg = 5, steps = 120, length = 0
 }
 
 // The real ball is 7 cm across. At 18 m that is a fraction of a degree, too small to follow, so the drawn ball never gets
-// smaller than `minAngularDeg` as seen from the viewer. The ring around it is a fixed angle too.
-export function drawnRadius(distance, realRadius = 0.036, minAngularDeg = 0.9) {
+// smaller than `minAngularDeg` (a radius, as seen from the viewer). The ring around it is a fixed angle too.
+// Cricket (Nov 18): the old 0.9 degree floor drew the ball 57 cm across in the bowler's hand, bigger than his head, and a six
+// went away as a beach ball. Now the ball is no more than about three times its real size at the bowler's end (22 cm), and the
+// real 7 cm ball from 6 m in, where it is met. The glow and the ring keep their old size, so it is as easy to follow as before.
+// A batted ball flying away keeps an even smaller floor: a red dot that is still visible over the rope.
+export const BALL_DEG = Object.freeze({ flight: 0.35, coast: 0.2, glow: 0.9 });
+export function drawnRadius(distance, realRadius = 0.036, minAngularDeg = BALL_DEG.flight) {
   const d = Math.max(0.1, Number.isFinite(distance) ? distance : 0.1);
   return Math.max(realRadius, d * Math.tan((minAngularDeg * Math.PI) / 180));
 }
@@ -276,7 +303,14 @@ export function makeDeliveries(count, rng) {
     const j = Math.floor(rng() * (i + 1));
     [lanes[i], lanes[j]] = [lanes[j], lanes[i]];
   }
-  return lanes.map((lane) => ({ lane, curve: (rng() * 2 - 1) * PATH.maxCurveM, length: rng() * 2 - 1 }));
+  // A leg-stump ball only ever swings back IN toward the stumps (a right-arm bowler's in-swinger), and by half the usual swing:
+  // swinging it on down the leg side would make it a wide. A negative curve bulges to the leg side and comes back in at the
+  // end, so it arrives heading at the stumps. The middle-stump ball swings a little less so it still hits the stumps either way
+  // (full swing leaves it a hair outside leg stump). The off lane swings either way and stays well inside the wide line.
+  return lanes.map((lane) => {
+    const curve = (rng() * 2 - 1) * PATH.maxCurveM;
+    return { lane, curve: lane < 0 ? -Math.abs(curve) / 2 : lane === 0 ? curve * 0.8 : curve, length: rng() * 2 - 1 };
+  });
 }
 
 export function cryptoRng() {

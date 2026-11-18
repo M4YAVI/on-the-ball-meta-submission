@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAT, HIT, TIMING, batBounce, launch, perfectLaunch, stepBatted, sweepHit, timingOf } from '../src/core/bat-physics.js';
+import { BAT, HIT, TIMING, batBounce, isPerfect, launch, perfectLaunch, stepBatted, sweepHit, timingOf } from '../src/core/bat-physics.js';
 import { FIELD } from '../src/core/ball-path.js';
 
 const sweetHit = { edge: false, sweet: true, e: 0.56 };
@@ -18,19 +18,36 @@ test('timing zones: the ideal point is PERFECT, further out is EARLY, nearer the
   assert.equal(timingOf(3).off, 1);
 });
 
-test('perfectLaunch: only a perfect touch, off the middle, with a real swing, toward the field in front, qualifies', () => {
+test('perfectLaunch: only a perfect touch, off the middle, with a real swing, qualifies', () => {
   const drive = [3, 1, -20]; // a drive, a little to the right
   const perfect = timingOf(TIMING.idealZ);
   assert.ok(perfectLaunch(drive, perfect, sweetHit, 15));
-  assert.equal(perfectLaunch(drive, timingOf(-1.4), sweetHit, 15), null, 'early is not perfect');
-  assert.equal(perfectLaunch(drive, timingOf(-0.5), sweetHit, 15), null, 'late is not perfect');
+  assert.equal(perfectLaunch(drive, timingOf(TIMING.idealZ - TIMING.perfectHalf - 0.05), sweetHit, 15), null, 'early is not perfect');
+  assert.equal(perfectLaunch(drive, timingOf(TIMING.idealZ + TIMING.perfectHalf + 0.05), sweetHit, 15), null, 'late is not perfect');
   assert.equal(perfectLaunch(drive, perfect, { edge: true, sweet: false, e: 0.4 }, 15), null, 'an edge never goes out');
   assert.equal(perfectLaunch(drive, perfect, { edge: false, sweet: false, e: 0.2 }, 15), null, 'off the toe or shoulder is not the middle');
-  assert.ok(perfectLaunch(drive, perfect, { edge: false, sweet: false, e: 0.5 }, 15), 'a clean blade contact just off the sweet spot still goes');
+  assert.ok(perfectLaunch(drive, perfect, { edge: false, sweet: false, e: 0.4 }, 15), 'a clean blade contact off the middle third still goes');
   assert.equal(perfectLaunch(drive, perfect, sweetHit, 3), null, 'a dab is not a swing');
-  assert.equal(perfectLaunch([2, 1, 6], perfect, sweetHit, 15), null, 'a ball going back toward the stumps does not qualify');
-  assert.equal(perfectLaunch([20, 1, -3], perfect, sweetHit, 15), null, 'a glance square of the wicket does not qualify');
   assert.equal(perfectLaunch(drive, null, sweetHit, 15), null);
+  assert.equal(isPerfect(perfect, sweetHit, 15), true);
+  assert.equal(isPerfect(perfect, sweetHit, 2), false);
+});
+
+test('a perfect touch always goes out in front: square or backward rebounds follow the swing, and are brought into the field', () => {
+  const perfect = timingOf(TIMING.idealZ);
+  const yawOf = (v) => (Math.atan2(v[0], -v[2]) * 180) / Math.PI;
+  // the ball rode up an open face and came off going back over the batsman: it goes the way the bat was swinging
+  const back = perfectLaunch([2, 9, 6], perfect, sweetHit, 15, [-3, 4, -14]);
+  assert.ok(back[2] < 0, 'toward the bowler');
+  assert.ok(Math.abs(yawOf(back) - yawOf([-3, 0, -14])) < 1e-9, 'along the swing');
+  // no swing direction to go by: straight back past the bowler
+  const straight = perfectLaunch([0, 9, 6], perfect, sweetHit, 15);
+  assert.ok(Math.abs(yawOf(straight)) < 1e-9);
+  // a glance square of the wicket is brought round into the field in front, on the same side
+  const square = perfectLaunch([20, 1, -3], perfect, sweetHit, 15);
+  assert.ok(Math.abs(yawOf(square) - TIMING.perfectMaxYawDeg) < 1e-9);
+  const squareLeg = perfectLaunch([-20, 1, -3], perfect, sweetHit, 15);
+  assert.ok(Math.abs(yawOf(squareLeg) + TIMING.perfectMaxYawDeg) < 1e-9);
 });
 
 test('perfectLaunch keeps the direction the player played and sends it fast and high', () => {
@@ -39,13 +56,15 @@ test('perfectLaunch keeps the direction the player played and sends it fast and 
   assert.ok(Math.abs(v[0] / hs - 4 / Math.hypot(4, 16)) < 1e-9, 'same heading, left or right');
   assert.ok(Math.abs(Math.hypot(...v) - TIMING.perfectExit) < 1e-9);
   assert.ok(Math.abs((Math.atan2(v[1], hs) * 180) / Math.PI - TIMING.perfectLoftDeg) < 1e-9);
-  // a ball that already leaves faster keeps its speed
-  const fast = perfectLaunch([0, 0, -45], timingOf(TIMING.idealZ), sweetHit, 14);
-  assert.ok(Math.abs(Math.hypot(...fast) - 45) < 1e-9);
+  // a ball that already leaves faster keeps its speed, up to a quarter more than the perfect speed
+  const fast = perfectLaunch([0, 0, -42], timingOf(TIMING.idealZ), sweetHit, 14);
+  assert.ok(Math.abs(Math.hypot(...fast) - 42) < 1e-9);
+  const wild = perfectLaunch([0, 0, -90], timingOf(TIMING.idealZ), sweetHit, 14);
+  assert.ok(Math.abs(Math.hypot(...wild) - TIMING.perfectExit * 1.25) < 1e-9);
 });
 
-test('a perfect shot is a SIX on the full: every direction it can qualify for clears the rope', () => {
-  for (let yaw = -TIMING.perfectMaxYawDeg; yaw <= TIMING.perfectMaxYawDeg; yaw += 4) {
+test('a perfect shot is a SIX on the full: every direction it can go clears the rope', () => {
+  for (let yaw = -90; yaw <= 90; yaw += 4) {
     const a = (yaw * Math.PI) / 180;
     // whatever speed the bat gave the ball, from a soft 20 m/s up to the cap
     for (const sp of [20, 28, 36]) {

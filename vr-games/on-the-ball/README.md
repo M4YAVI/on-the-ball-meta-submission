@@ -44,10 +44,21 @@ like a handle (ring up, palm to the bowler) for the stance; the bat is always at
 - **Timing meter (right of the view): EARLY / PERFECT / LATE.** Each time the bat meets the ball a marker lands on the meter
   where your timing was and that zone lights up (it is dim the rest of the time). Timing is the ball's depth at the touch
   (`TIMING` in `src/core/bat-physics.js`): met far out in front is EARLY, nearer the body is LATE, a narrow band (22 cm) around
-  the ideal point is PERFECT. **A PERFECT touch off a lively part of the blade, with a real swing, goes out of the ground**: it
-  leaves at 130 km/h, 24 degrees up, in the direction you played it (left or right of straight), so it clears the rope on the
-  full. An edge, a dab, a toe or shoulder hit or a glance behind square never does. The meter is feedback only: it is not the
-  eye-tracking score.
+  the ideal point is PERFECT (48 cm wide since Nov 18). **A PERFECT touch off the middle third of the blade, with a real swing,
+  always goes out of the ground**: it leaves at 130 km/h or more, 24 degrees up, in the direction you played it (left or right
+  of straight). If the ball came off going square or back, it goes the way the bat was swinging, brought into the field in
+  front (within 50 degrees of straight). An edge, a dab, or a toe or shoulder hit never does. The meter is feedback only: it is
+  not the eye-tracking score.
+- **PC swing (Nov 18, "make it easy to hit").** The pose lives in `src/core/pc-swing.js` (pure maths, tested in
+  `tests/pc-swing.test.mjs`). Through the hit zone the hands now push the bat down the pitch with the face square, instead of
+  only turning the bat about the hands (that pointed the blade at the bowler, so a middled ball flew up or back). The look line
+  is read at the bat's depth and the hands reach to the height you look at. An offline simulator that plays every lane, length,
+  speed and swing start time found every delivery hittable (typical window 100+ ms, was untouchable for some) with a PERFECT
+  window for every lane at the default speed, and a look up to 8 cm off the ball still hits. A ball that has gone past the
+  batsman no longer clicks off a bat held up behind him.
+- **Ball size (Nov 18).** The drawn cricket ball is the real 7 cm ball from about 6 m in, and no more than about three times
+  that at the bowler's end (it used to be 57 cm across in his hand). The glow and ring keep their old size, so it is as easy to
+  follow. A batted ball flying away has a smaller floor (`BALL_DEG` in `src/core/ball-path.js`).
 - **A slightly bigger target.** The ball's contact size is 2 cm bigger on a headset (5 cm on the PC control), so a ball that
   just grazes past still counts (`HIT_PAD` / `PC_HIT_PAD` in `src/game.js`). The bat and the ball are never moved toward each
   other, so a swing that is really early or late still misses.
@@ -70,7 +81,7 @@ like a handle (ring up, palm to the bowler) for the stance; the bat is always at
   delivery closes as before. Shot call-outs are never part of the score.
 - The bat is in hand on the ready screen (practice swings), every delivery and the pause; it is hidden on the menus.
 - Tuning knobs: `BAT`/`HIT` in `src/core/bat-physics.js`, `gripToBat` in `src/xr/bat.js` (how the bat sits in the fist),
-  the swing range and hand position at the top of `src/xr/mouse-bat.js`.
+  the swing range, hand position and aim at the top of `src/core/pc-swing.js`.
 - Demo video: `node record-cricket-batting.mjs` (repo root) records the emulator with a scripted arm swinging the controller.
 
 ## The four sports
@@ -103,8 +114,9 @@ All four are watch-only, seated, twenty balls and the same scoring, and they sha
 | Meta Quest 3 / 3S | No eye tracker: head mode, with a faint amber dot showing where the head points | HEAD |
 | Desktop emulator (IWER) | Emulated gaze; works for demos and tests, never presented as real eyes | SIMULATED |
 
-Why eyes matter: a ball that ends 16 degrees to the side while the head stays straight is GREEN for eyes that follow it and
-AMBER/RED for a head-only device. That is the case this product is built for.
+Why eyes matter: a ball outside off stump ends about 11 degrees to the side; with the head straight it is GREEN for eyes that
+follow it and AMBER/RED for a head-only device. That is the case this product is built for. Every delivery is a fair ball
+(Nov 18): the three lanes cross the stumps on the leg stump, on the middle stump and outside off, never a wide.
 
 ## Run
 ```

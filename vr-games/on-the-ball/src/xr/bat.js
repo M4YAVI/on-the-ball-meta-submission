@@ -10,6 +10,7 @@
 import { BoxGeometry, CanvasTexture, CylinderGeometry, Group, Matrix4, Mesh, MeshStandardMaterial, PlaneGeometry, Quaternion, SphereGeometry, SRGBColorSpace, Vector3 } from '@iwsdk/core';
 import { BAT, batToWorld } from '../core/bat-physics.js';
 import { makeGloves } from './gloves.js';
+import { headOffset, SleeveArm } from './arms.js';
 
 const HISTORY = 8; // frames of pose history kept for the swing speed
 const VEL_WINDOW = 0.03; // s: swing speed is measured over about this long (smooths hand-tracking jitter, little lag)
@@ -180,6 +181,10 @@ export class Bat {
     // the batsman's gloves on the handle (look only: the hit test uses the blade)
     this.gloves = makeGloves();
     this.visual.add(this.gloves);
+    // and his arms, from the gloves back to his shoulders (they live in the anchor beside the bat, not on it)
+    this.batArms = { group: new Group(), top: new SleeveArm(), bottom: new SleeveArm(), w: new Vector3(), hv: new Vector3(), ha: [0, 0, 0] };
+    this.batArms.group.name = 'otb-batsman-arms';
+    this.batArms.group.add(this.batArms.top.group, this.batArms.bottom.group);
   }
 
   // Which hand holds it. Right by default; the left when only the left is tracked (and, once there, it stays there until the
@@ -206,6 +211,39 @@ export class Bat {
 
   // Called once per frame, before the ball moves. anchor: the scene anchor (eye frame). Returns true while the bat is in hand.
   update(anchor, dt, time) {
+    const on = this.updatePose(anchor, dt, time);
+    this.updateBatArms(anchor);
+    return on;
+  }
+
+  // The batsman's arms: each glove's wrist back to its shoulder. The top hand is the left hand (a right-hander's grip), the
+  // bottom one the right; mirrored when the bat is in the left hand.
+  updateBatArms(anchor) {
+    const A = this.batArms;
+    if (!A) return;
+    if (A.group.parent !== anchor) anchor.add(A.group);
+    if (!this.group.visible) {
+      A.group.visible = false;
+      return;
+    }
+    A.group.visible = true;
+    this.group.updateWorldMatrix(true, true);
+    anchor.updateWorldMatrix(true, false);
+    const head = headOffset(this.world, anchor, A.hv, A.ha);
+    const left = this.side === 'left';
+    const wr = this.gloves.userData.wrists;
+    for (const [arm, local, shoulder] of [
+      [A.top, wr.top, left ? 'right' : 'left'],
+      [A.bottom, wr.bottom, left ? 'left' : 'right'],
+    ]) {
+      A.w.copy(local);
+      this.gloves.localToWorld(A.w);
+      anchor.worldToLocal(A.w);
+      arm.update(A.w, shoulder, head);
+    }
+  }
+
+  updatePose(anchor, dt, time) {
     if (!this.enabled || !this.world.session) {
       this.group.visible = false;
       this.pose = this.prevPose = null;

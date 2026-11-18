@@ -56,13 +56,13 @@ export const GROUND_PLAN = Object.freeze({
 // reads the same for a hand swing and the PC control. PERFECT is a narrow band around the ideal point.
 export const TIMING = Object.freeze({
   idealZ: -1.0, // m in front of the eyes: where a well-timed shot meets the ball, the bat at full speed
-  perfectHalf: 0.11, // m either side of the ideal point that is PERFECT
-  scale: 0.45, // m from the ideal point to the end of the meter
-  perfectMinBatSpeed: 7, // m/s: a perfect shot needs a swing, not a dab (a poke or a block is under about 5)
-  perfectMinE: 0.45, // the blade must be lively where it met the ball (the middle, not the toe or the shoulder)
+  perfectHalf: 0.24, // m either side of the ideal point that is PERFECT (about 1.5 ball-lengths of travel at the default speed)
+  scale: 0.55, // m from the ideal point to the end of the meter
+  perfectMinBatSpeed: 4, // m/s: a perfect shot needs a swing, not a dab (a poke or a block is under about 4)
+  perfectMinE: 0.36, // the blade must be lively where it met the ball: the middle third of the blade, not the toe or the shoulder
   perfectExit: 36, // m/s (130 km/h): off the middle on a perfect shot
   perfectLoftDeg: 24, // the angle it leaves at: up and over the rope
-  perfectMaxYawDeg: 62, // a perfect shot is a shot to the field in front: not a glance behind square
+  perfectMaxYawDeg: 50, // a perfect shot goes into the field in front: anything squarer is brought round to this
 });
 
 // Where the touch was in the timing band. off: -1 (as early as the meter shows) .. +1 (as late); zone: 'early' | 'perfect' | 'late'.
@@ -72,19 +72,28 @@ export function timingOf(contactZ) {
   return { zone, off: clamp(d / TIMING.scale, -1, 1), dz: d };
 }
 
-// A perfectly timed shot off the middle goes out of the ground: the ball keeps the direction the bat sent it (left or right of
-// straight, as the player played it) and leaves fast and high enough to clear the rope on the full. Returns the new velocity, or
-// null when the shot does not qualify (an edge, a slow swing, a glance behind square, the ball not going forward).
-export function perfectLaunch(v, timing, hit, batSpeed) {
-  if (!timing || timing.zone !== 'perfect' || !hit || hit.edge || !(hit.e >= TIMING.perfectMinE)) return null;
-  if (batSpeed < TIMING.perfectMinBatSpeed) return null;
-  const hs = Math.hypot(v[0], v[2]);
-  if (hs < 1e-6 || v[2] > 0) return null; // not going toward the bowler's end
-  const yaw = (Math.atan2(Math.abs(v[0]), -v[2]) * 180) / Math.PI;
-  if (yaw > TIMING.perfectMaxYawDeg) return null;
+// Does this touch qualify as a PERFECT shot? Perfect timing, off the middle of the blade (not an edge, not the toe or the
+// shoulder), with a real swing.
+export function isPerfect(timing, hit, batSpeed) {
+  return !!timing && timing.zone === 'perfect' && !!hit && !hit.edge && hit.e >= TIMING.perfectMinE && batSpeed >= TIMING.perfectMinBatSpeed;
+}
+
+// A perfectly timed shot off the middle goes out of the ground, always. It goes the way the player played it: the heading the
+// bat sent the ball (left or right of straight), or, when the ball came off the face going square or back (a face a little
+// open, a ball that rode up the blade), the way the bat itself was swinging. Either is brought into the field in front (within
+// perfectMaxYawDeg of straight). It leaves fast and high enough to clear the rope on the full. Returns the new velocity, or null
+// when the touch does not qualify. batV: the blade's velocity at the touch (optional).
+export function perfectLaunch(v, timing, hit, batSpeed, batV = null) {
+  if (!isPerfect(timing, hit, batSpeed)) return null;
+  let dir = null;
+  if (v[2] < 0 && Math.hypot(v[0], v[2]) > 1e-6) dir = [v[0], -v[2]];
+  else if (batV && batV[2] < 0 && Math.hypot(batV[0], batV[2]) > 1e-6) dir = [batV[0], -batV[2]];
+  else dir = [0, 1]; // straight back past the bowler
+  const maxYaw = (TIMING.perfectMaxYawDeg * Math.PI) / 180;
+  const yaw = clamp(Math.atan2(dir[0], dir[1]), -maxYaw, maxYaw);
   const e = (TIMING.perfectLoftDeg * Math.PI) / 180;
-  const s = Math.max(TIMING.perfectExit, len(v));
-  return [(v[0] / hs) * Math.cos(e) * s, Math.sin(e) * s, (v[2] / hs) * Math.cos(e) * s];
+  const s = clamp(len(v), TIMING.perfectExit, TIMING.perfectExit * 1.25);
+  return [Math.sin(yaw) * Math.cos(e) * s, Math.sin(e) * s, -Math.cos(yaw) * Math.cos(e) * s];
 }
 
 const FLY = Object.freeze({

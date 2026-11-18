@@ -1,5 +1,6 @@
-// The ball and the ring that marks the live ball (deck slide 5). The ball is drawn at least ~0.9 degrees across so it can be
-// followed from the bowler's end; the ring is a fixed ~2.7 degrees around it. A red leather cricket ball with a cream seam,
+// The ball and the ring that marks the live ball (deck slide 5). The ball is close to its real size (at most about three times
+// it at the bowler's end, the real 7 cm ball where it is met; see BALL_DEG); a soft glow and a ring of a fixed ~2.7 degrees around
+// it keep it easy to follow from the bowler's end. A red leather cricket ball with a cream seam,
 // as in the deck (slide 5 picture, slide 12 "The ball: a red sphere"). To stay easy to follow against grass and sky, the ball is
 // lit from inside (emissive) and carries a soft warm glow. The ring is deliberately restrained: thin, low in the picture and
 // faded in over the first fifth of a second after release, so it reads as a guide rather than a floating target.
@@ -8,7 +9,7 @@
 // turns red mid-ball. It is feedback only; scoring does not read it.
 
 import { AdditiveBlending, CanvasTexture, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, SphereGeometry, SRGBColorSpace } from '@iwsdk/core';
-import { drawnRadius, ringRadius } from '../core/ball-path.js';
+import { BALL_DEG, drawnRadius, PHYS, ringRadius } from '../core/ball-path.js';
 
 const WHITE = new Color('#ffffff');
 const GREEN = new Color('#3DDC84');
@@ -85,7 +86,7 @@ export class BallRig {
   coast(local, dist, dt) {
     this.group.visible = true;
     this.group.position.copy(local);
-    this.ball.scale.setScalar(drawnRadius(dist));
+    this.ball.scale.setScalar(drawnRadius(dist, PHYS.ballRadius, BALL_DEG.coast));
     this.glow.visible = false;
     this.ring.visible = false;
     if (dt > 0) {
@@ -121,11 +122,12 @@ export class BallRig {
     const reveal = Math.min(1, this.age / 0.2); // the ring fades in after release instead of popping as a target
     const ease = reveal * reveal * (3 - 2 * reveal);
     this.group.position.copy(local);
-    const r = drawnRadius(dist);
+    const r = drawnRadius(dist, PHYS.ballRadius, BALL_DEG.flight);
     this.ball.scale.setScalar(r * (0.9 + 0.1 * ease));
-    // a short bright flash as it leaves the hand, then a steady soft glow
+    // a short bright flash as it leaves the hand, then a steady soft glow (sized as before, so the ball is as easy to follow)
     const flash = Math.max(0, 1 - this.age / 0.12);
-    this.glow.scale.setScalar(r * (4 + 3 * flash) * (0.7 + 0.3 * ease));
+    const g = drawnRadius(dist, PHYS.ballRadius, BALL_DEG.glow);
+    this.glow.scale.setScalar(g * (4 + 3 * flash) * (0.7 + 0.3 * ease));
     this.glow.lookAt(eyeWorld);
     // thinner and smaller than before, and it eases in: enough to follow, not a floating target
     const ring = ringRadius(dist) * (0.72 + 0.28 * ease) * (1 + 0.06 * this.lock);

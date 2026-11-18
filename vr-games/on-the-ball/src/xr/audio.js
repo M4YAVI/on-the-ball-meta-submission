@@ -29,7 +29,7 @@ export class Sfx {
   // Must run from a user action (a pinch or click) so the browser lets sound start.
   unlock() {
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => { });
       return;
     }
     try {
@@ -48,7 +48,7 @@ export class Sfx {
           .then((buf) => {
             this.buffers[name] = buf;
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     } catch (_) {
       this.ctx = null;
@@ -92,7 +92,7 @@ export class Sfx {
         l.setPosition(_scratchPos.x, _scratchPos.y, _scratchPos.z);
         l.setOrientation(_scratchDir.x, _scratchDir.y, _scratchDir.z, _scratchUp.x, _scratchUp.y, _scratchUp.z);
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // Spatial PannerNode configured for HRTF 3D spatialization on Meta Quest / WebXR
@@ -299,34 +299,6 @@ export class Sfx {
         src.connect(filter).connect(gain).connect(dest);
         src.start(t);
         src.stop(t + dur + 0.02);
-      } else if (name === 'cheer') {
-        // The crowd going up for a boundary: a wide, swelling roar that dies away.
-        const dur = 2.2;
-        for (const [f, q, v] of [[700, 0.7, 1], [1500, 1.1, 0.6], [2800, 1.4, 0.3]]) {
-          const src = this.ctx.createBufferSource();
-          src.buffer = this.noiseBuffer();
-          src.loop = true;
-          const filter = this.ctx.createBiquadFilter();
-          filter.type = 'bandpass';
-          filter.frequency.value = f;
-          filter.Q.value = q;
-          const gain = this.ctx.createGain();
-          gain.gain.setValueAtTime(0.001, t);
-          gain.gain.exponentialRampToValueAtTime(volume * v, t + 0.35);
-          gain.gain.setValueAtTime(volume * v, t + 0.8);
-          gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-          // a slow wobble so it sounds like many voices, not wind
-          const lfo = this.ctx.createOscillator();
-          const lfoGain = this.ctx.createGain();
-          lfo.frequency.value = 5 + f / 700;
-          lfoGain.gain.value = volume * v * 0.25;
-          lfo.connect(lfoGain).connect(gain.gain);
-          src.connect(filter).connect(gain).connect(dest);
-          src.start(t);
-          src.stop(t + dur + 0.05);
-          lfo.start(t);
-          lfo.stop(t + dur + 0.05);
-        }
       } else if (name === 'bounce') {
         // Authentic cricket pitch / turf bounce: compacted turf thud + leather contact thack + grass seam bite
         const dur = 0.11;
@@ -417,7 +389,7 @@ export class Sfx {
         slap.start(t);
         slap.stop(t + 0.06);
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   play(name, volume = 0.5, opts = {}) {

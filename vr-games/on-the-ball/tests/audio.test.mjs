@@ -178,4 +178,9 @@ test('procedural fallback synthesis: builds audio graph nodes without crashing',
     sfx.synthFallback(s, mockNode(), 0.5, 1.1);
     assert.ok(createdNodes.length > 0, `Expected synthesized audio nodes for ${s}`);
   }
+
+  // cheer synthesis is removed so perfect hits and wins do not trigger noisy synthetic crowd roar
+  createdNodes.length = 0;
+  sfx.synthFallback('cheer', mockNode(), 0.5, 1.1);
+  assert.equal(createdNodes.length, 0, 'cheer should not synthesize any audio nodes');
 });
