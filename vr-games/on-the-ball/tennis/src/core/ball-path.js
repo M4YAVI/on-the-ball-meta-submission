@@ -1,9 +1,9 @@
-// The serve path for TENNIS, seen from the RECEIVER's eyes, and the rules that keep it comfortable on Meta VR Glasses.
+﻿// The serve path for TENNIS, seen from the RECEIVER's eyes, and the rules that keep it comfortable on Meta VR Glasses.
 //
 // Product direction (deck slide 6, "Tennis and football. Same ring. You still do not pinch."): the player sits on the baseline as
 // the receiver. The server stands on the far baseline, about 23 m away, tosses the ball, strikes it, and it comes to you. It
-// bounces ONCE in the service box, rises, and is gone about 1.2 m in front of the eyes. You never hit, catch or touch it: you
-// only watch it, and the eyes are the input ("Watch the ball. Get the count.").
+// bounces ONCE in the service box, rises, and reaches its arrival point about 1.2 m in front of the eyes, where the eye score ends.
+// The eyes are the score ("Watch the ball. Get the count."); the racket in the player's hand returns it (core/racket-physics.js).
 //
 // Coordinates are in the viewer's frame, the same as cricket and football: x to the right, y up from the eye, z negative
 // straight ahead. The scene is placed so that frame follows the seated player's eye position.

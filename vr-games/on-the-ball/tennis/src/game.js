@@ -8,7 +8,6 @@
 //   - A sensor failure gives UNSCORED, never red.
 //   - Only totals are kept. No gaze or head poses are stored.
 
-import { startRoll, stepRoll } from '../../src/core/ball-path.js';
 import { createSystem, Group, Mesh, MeshBasicMaterial, Pressed, Quaternion, RayInteractable, RingGeometry, SphereGeometry, Vector3, VisibilityState } from '@iwsdk/core';
 // The scoring engine, gaze checks, session flow, history and panels are the same ones cricket uses (../../src); only the
 // serve physics, the court, the ball and the words are tennis's.
@@ -20,12 +19,27 @@ import { Rays } from '../../src/xr/rays.js';
 import { Sfx } from '../../src/xr/audio.js';
 import { Ui } from '../../src/xr/ui.js';
 import { COLORS } from '../../src/xr/theme.js';
-import { ballPosition, bounceT, cleanSide, flightMs, makeDeliveries, otherSide, PATH, SIDE, sideName, SPEED_OPTIONS } from './core/ball-path.js';
+import { ballPosition, bounceT, cleanSide, flightMs, makeDeliveries, otherSide, PATH, PHYS, SIDE, SPEED_OPTIONS } from './core/ball-path.js';
 import { TennisScene } from './xr/tennis-scene.js';
 import { BallRig } from './xr/ball.js';
 import { TENNIS_SKIN } from './skin.js';
+import { Racket } from './xr/racket.js';
+import { MouseRacket } from './xr/mouse-racket.js';
+import { ReturnCallout } from './xr/return-callout.js';
+import { TimingMeter } from './xr/timing-meter.js';
+import { ASSIST, assistContact, contactPoint, easyReturn, hapticFor, launchReturn, predictReturn, RACKET, racketBounce, returnKind, serveVelocity, startCarry, stepCarry, stepReturn, sweepRacket, timingOf } from './core/racket-physics.js';
 
 const LEAD_IN = 1.5; // s: the server settles, lifts his free arm and tosses the ball before he strikes it
+const MAX_FLIGHT_STEP = 0.05; // s: the most the ball's flight clock moves in one frame (a frame hitch holds the ball, never jumps it)
+const HIT_LINGER = 0.45; // s after a return (and after the serve's arrival time) before the serve is closed
+const SWISH_SPEED = 9; // m/s at the sweet spot: a swing this fast whooshes
+// Forgiving contact size: metres added to the ball's radius in the strings test. On top of it a SWINGING racket meets any ball
+// its sweet spot passes within reach of (core/racket-physics.js ASSIST), and every return lands in (easyReturn): hand play is
+// for fun, the eyes are the score. The PC control gets a little more (a wheel is cruder than an arm).
+const HIT_PAD = 0.03;
+const PC_HIT_PAD = 0.04;
+// The racket is in hand on these screens: practice swings before the first serve, every serve, and the pause.
+const RACKET_PHASES = new Set([PHASE.READY, PHASE.PLAYING, PHASE.BETWEEN, PHASE.PAUSED]);
 const GAP = 2.2; // s between deliveries
 const TOLERANCE = BASE_TOLERANCE.base; // 7 deg near the centre; eye mode widens it toward the edge (core/engine.js toleranceFor)
 const CAL_ANGLE = 14; // degrees to each side for the calibration dots
@@ -90,6 +104,24 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.anchor.add(this.headDot);
     this.readyDot = this.makeReadyDot();
     this.anchor.add(this.readyDot);
+    // Hand play: the racket follows the player's hand and a return goes back by the racket's own speed and direction. The
+    // eye-tracking score does not change: it still follows the ball (wherever it goes) and still ends at the serve's arrival.
+    this.racket = new Racket(this.world);
+    this.anchor.add(this.racket.group, this.racket.body);
+    this.callout = new ReturnCallout();
+    this.anchor.add(this.callout.mesh);
+    this.meter = new TimingMeter(); // EARLY / PERFECT / LATE on the right: feedback for the return, never part of the score
+    this.anchor.add(this.meter.mesh);
+    this.returned = null; // the last return, still flying or rolling after its serve was scored
+    this.swishAt = -Infinity;
+    this.hitOnce = false;
+    this.hand = { serves: 0, returns: 0, in: 0, winners: 0 }; // the racket's own tally for the scorecard line
+    // Desktop emulator only: the mouse wheel swings the racket (a headset never uses this).
+    this.mouseRacket = new MouseRacket(this.world);
+    this.anchor.add(this.mouseRacket.hint);
+    this.racket.override = () => this.mouseRacket.pose(this.anchor);
+    this.racket.freeOverride = () => this.mouseRacket.freePose();
+    this.cleanupFuncs.push(() => this.mouseRacket.dispose());
 
     this.eyeAvailable = false;
     this.eyeNote = '';
@@ -164,8 +196,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     }
   }
 
-  // Watch-only game: hands and controllers only select, so their 3D models are never drawn. The SDK's thin pointer ray and
-  // cursor stay, and show only while pointing at a button.
+  // The SDK's own hand and controller models are never drawn: the player sees the racket and his own hands instead (xr/racket.js).
+  // The SDK's thin pointer ray and cursor stay, and show only while pointing at a button.
   hideInputModels() {
     const v = this.world.input?.xr?.visualAdapters;
     if (!v) return;
@@ -195,7 +227,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
   prewarm() {
     const r = this.world.renderer;
     if (!r) return;
-    const objs = [this.ball.group, this.readyDot, this.calDots, this.headDot];
+    const objs = [this.ball.group, this.readyDot, this.calDots, this.headDot, this.racket.group, this.racket.body, this.racket.free, this.racket.freeOpen, this.racket.freeFist, this.racket.armRacket.group, this.racket.armFree.group, this.callout.mesh, this.meter.mesh];
     const was = objs.map((o) => o.visible);
     try {
       objs.forEach((o) => (o.visible = true));
@@ -364,7 +396,20 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       streak: this.streak,
       bestStreak: this.bestStreak,
       inHub: IN_HUB,
+      hand: this.handLine(),
     };
+  }
+
+  // The racket's line on the scorecard, under the eye-tracking source (the eye counts stay the score). Only once the racket
+  // has been used.
+  handLine() {
+    const h = this.hand;
+    if (!h.returns) return null;
+    return { line: `Racket: ${h.in} of ${h.serves} returns in · ${h.winners} winner${h.winners === 1 ? '' : 's'}` };
+  }
+
+  resetHand() {
+    this.hand = { serves: 0, returns: 0, in: 0, winners: 0 };
   }
 
   showPhase() {
@@ -503,6 +548,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
           this.bestStreak = 0;
           this.finishedTs = null;
           this.nextAt = null;
+          this.resetHand();
           if (!finished) this.nextSide = otherSide(this.side);
           this.applySide(this.nextSide);
           this.toReady();
@@ -513,7 +559,11 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
       case 'btn:exit2':
         this.cur = null;
         this.roll = null;
-    this.ball.show(false);
+        this.returned = null;
+        this.callout.hide();
+        this.meter.clear();
+        this.resetHand();
+        this.ball.show(false);
         this.flash = null;
         this.finishedTs = null;
         this.nextAt = null;
@@ -639,6 +689,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     // Real flight time for this serve: its strike speed and where it bounces.
     const dur = flightMs(b.delivery.depth, this.speed.kmh);
     this.cur = { ...b, dur, kmh: this.speed.kmh, t0: this.time + LEAD_IN, side: this.side, released: false, bounced: false, locked: false, onSince: null, offSince: null, trial: new Trial(f.mode, dur, TOLERANCE) };
+    // when and where this serve reaches the contact point if nobody hits it: the PC racket goes there and times itself to it
+    const d = b.delivery;
+    this.cur.meet = contactPoint({ lane: d.lane, curve: d.curve, depth: d.depth, kmh: this.speed.kmh, side: this.side }, dur);
     this.nextAt = null;
     this.showPhase();
   }
@@ -650,6 +703,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.cur = null;
     this.nextAt = null;
     this.roll = null;
+    this.returned = null;
+    this.callout.hide();
+    this.meter.clear();
     this.ball.show(false);
     this.readyDot.visible = false;
     this.scene3d.setDelivery(null);
@@ -663,12 +719,114 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.ball.coast(this.local, this.world3.distanceTo(this.o), r.rest ? 0 : dt);
   }
 
+  // ------------------------------------------------------------------ the racket
+  // Did the racket meet the ball between the last frame and this one? p: the ball's position now, v: its velocity (eye frame).
+  // On a hit the ball goes back by the racket's own speed and direction (core/racket-physics.js), with a sound and a pulse.
+  tryRacket(c, p, v, time) {
+    const prev = c.prev;
+    c.prev = [p[0], p[1], p[2]];
+    const r = this.racket;
+    if (c.racketSeen === undefined) c.racketSeen = false;
+    if (r.pose) c.racketSeen = true;
+    if (!prev || !r.pose || !r.prevPose) return false;
+    const pad = PHYS.ballRadius + (r.pcDriven ? PC_HIT_PAD : HIT_PAD);
+    let contact = sweepRacket(r.prevPose, r.pose, prev, p, pad);
+    if (!contact) {
+      // the reach of a swing: the sweet spot passed close to the ball while the racket was swinging through
+      const sv = r.velocityAt([0, 0, RACKET.sweetZ], time);
+      contact = assistContact(r.prevPose, r.pose, prev, p, r.pcDriven ? ASSIST.reachPc : ASSIST.reach, sv);
+    }
+    if (!contact) return false;
+    const rv = r.velocityAt([0, contact.local[1], contact.local[2]], time);
+    let res = racketBounce(v, rv, contact);
+    const n = res.normal;
+    const start = [contact.ball[0] + n[0] * 0.012, contact.ball[1] + n[1] * 0.012, contact.ball[2] + n[2] * 0.012];
+    // Timing: where the racket met the ball. Every return goes back over and in (easy play); PERFECT goes deep and fast for a
+    // winner, early is pulled cross-court, late pushed the other way. The player's swing still picks the side.
+    const timing = timingOf(contact.ball[2]);
+    const easy = easyReturn(res.v, timing, start, c.side);
+    res = { ...res, v: easy.v, w: easy.w };
+    const kmh = Math.hypot(res.v[0], res.v[1], res.v[2]) * 3.6;
+    const st = launchReturn(start, res.v, res.w);
+    const hit = { st, res, at: time, kmh, said: null, timing, perfect: easy.perfect, frame: res.frame, v0: res.v.slice() };
+    const big = easy.perfect;
+    // The outcome is known the moment it leaves the racket (the same physics flown ahead), so the scorecard is right even when
+    // the last serve's return is still in the air.
+    hit.outcome = returnKind({ ...predictReturn(st, c.side), rest: true }, hit);
+    c.hit = hit;
+    if (!c.warmup) {
+      this.hand.returns += 1;
+      if (hit.outcome === 'in' || hit.outcome === 'winner') this.hand.in += 1;
+      if (hit.outcome === 'winner') this.hand.winners += 1;
+    }
+    this.meter.show(timing, !!big);
+    this.hitOnce = true;
+    this.world3.set(start[0], start[1], start[2]);
+    this.anchor.localToWorld(this.world3);
+    const loud = Math.min(1, res.impact / 40);
+    this.sfx.play(res.frame ? 'edge' : 'racket', 0.35 + 0.5 * loud, { kmh: Math.max(70, kmh), pos: this.world3 });
+    const hp = hapticFor(res);
+    r.pulse(hp.intensity, hp.ms);
+    if (import.meta.env.DEV) {
+      console.info(`[otb] hit ${contact.assisted ? `reach ${contact.miss.toFixed(2)}m` : res.frame ? 'frame' : res.sweet ? 'middle' : 'strings'} exit=${kmh.toFixed(0)}km/h racket=${Math.hypot(...rv).toFixed(1)}m/s u=${res.u.toFixed(2)} spin=${Math.hypot(...res.w).toFixed(0)} timing=${timing.zone} z=${contact.ball[2].toFixed(2)} -> ${hit.outcome}${big ? ' PERFECT' : ''}`);
+    }
+    return true;
+  }
+
+  // Move a return on, and call it once it is decided (where it bounces, or the net).
+  advanceReturn(h, dt) {
+    const before = h.st.bounces;
+    stepReturn(h.st, dt, this.side);
+    if (h.st.bounces > before && h.st.bounces <= 2) {
+      this.world3.set(h.st.p[0], h.st.p[1], h.st.p[2]);
+      this.anchor.localToWorld(this.world3);
+      this.sfx.play('bounce', h.st.bounces === 1 ? 0.3 : 0.18, { kmh: 90, pos: this.world3 });
+    }
+    if (h.said) return;
+    const kind = returnKind(h.st, h);
+    if (!kind) return;
+    h.said = kind;
+    if (import.meta.env.DEV) console.info(`[otb] return ${kind}${h.perfect ? ' (perfect timing)' : ''}`);
+    this.callout.show(kind, h.kmh);
+  }
+
+  placeReturned(st, dt) {
+    this.local.set(st.p[0], st.p[1], st.p[2]);
+    this.world3.copy(this.local);
+    this.anchor.localToWorld(this.world3);
+    this.ball.coast(this.local, this.world3.distanceTo(this.o), st.rest ? 0 : dt);
+  }
+
+  updateRacket(dt, time) {
+    const on = RACKET_PHASES.has(this.flow.phase);
+    this.racket.setEnabled(on);
+    this.meter.setEnabled(on && !!this.world.session);
+    if (!on) this.mouseRacket.reset();
+    this.mouseRacket.showHint(on && !this.hitOnce);
+    // the PC racket moves on the ball's clock (a frame hitch holds both), and knows the serve that is coming
+    this.mouseRacket.frameDt = Math.min(dt, MAX_FLIGHT_STEP);
+    const c = this.cur;
+    if (c?.meet && !c.hit && this.flow.phase === PHASE.PLAYING) {
+      const since = c.released ? c.flight + Math.min(dt, MAX_FLIGHT_STEP) : time - c.t0; // the ball's clock at the end of this frame
+      this.mouseRacket.setBall(c, c.meet.t - since, c.meet.p, c.meet.speed);
+    } else this.mouseRacket.setBall(null);
+    if (!this.racket.update(this.anchor, dt, time)) return;
+    const sp = this.racket.tipSpeed(time);
+    if (sp > SWISH_SPEED && time - this.swishAt > 0.5) {
+      this.swishAt = time;
+      this.racket.group.getWorldPosition(this.world3);
+      this.sfx.play('swish', 0.1 + 0.28 * Math.min(1, (sp - SWISH_SPEED) / 14), { pos: this.world3 });
+    }
+  }
+
   stepPlay(dt, time) {
     const c = this.cur;
     if (!c) return;
     this.roll = null;
     const f = this.flow;
-    const lead = time - c.t0;
+    // Once the ball is struck, its clock moves at most MAX_FLIGHT_STEP per frame: a frame hitch (a busy PC running the emulator)
+    // holds the ball still for that frame instead of jumping it ahead. At a steady headset frame rate nothing changes.
+    const lead = c.released ? (c.flight += Math.min(dt, MAX_FLIGHT_STEP)) : time - c.t0;
     if (lead < 0) {
       this.scene3d.setDelivery(lead); // seconds to the strike: the server lifts his arm and tosses
       // The real tennis ball is there from the start: in the server's hand, then up in the toss.
@@ -681,6 +839,8 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     }
     if (!c.released) {
       c.released = true;
+      c.flight = Math.min(lead, MAX_FLIGHT_STEP);
+      this.returned = null; // the last return is picked up: a new ball is served
       this.readyDot.visible = false;
       this.ball.show(true);
       const toss = this.scene3d.tossPos || ballPosition(0, c.delivery.lane, c.delivery.curve, c.delivery.depth, c.kmh, c.side);
@@ -691,17 +851,36 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     }
     this.scene3d.setDelivery(lead); // seconds since the strike: the follow-through after the ball has gone
     const ms = lead * 1000;
+    const sd = { lane: c.delivery.lane, curve: c.delivery.curve, depth: c.delivery.depth, kmh: c.kmh, side: c.side };
     if (ms >= c.dur) {
-      // Past the arrival point the ball keeps flying past the player, lands behind them and stays there. Scoring ended at arrival.
-      c.roll ??= startRoll((u) => ballPosition(u, c.delivery.lane, c.delivery.curve, c.delivery.depth, c.kmh, c.side), c.dur);
-      stepRoll(c.roll, dt);
+      // Past the arrival point the ball flies on along its own path (scoring ended at arrival). The racket can still meet it
+      // here: the arrival point is 1.2 m out and a player hits it a little later, nearer the body. A ball nobody hits carries
+      // on past the player and is turned aside only once it is past any racket (core/racket-physics.js startCarry).
+      if (!c.hit) {
+        c.roll ??= startCarry(ballPosition(1, sd.lane, sd.curve, sd.depth, sd.kmh, sd.side), serveVelocity(1, sd, c.dur));
+        stepCarry(c.roll, Math.min(dt, MAX_FLIGHT_STEP));
+        this.tryRacket(c, c.roll.p, c.roll.v, time);
+      } else this.advanceReturn(c.hit, dt);
+      if (c.hit) {
+        this.placeReturned(c.hit.st, dt);
+        if (time - c.hit.at >= HIT_LINGER) this.finishBall(time);
+        return;
+      }
       this.placeRoll(c.roll, dt);
-      if (c.roll.p[2] >= 1.0 || c.roll.rest) this.finishBall(time);
+      if (c.roll.rest) this.finishBall(time);
       return;
     }
     const t01 = ms / c.dur;
-    const p = ballPosition(t01, c.delivery.lane, c.delivery.curve, c.delivery.depth, c.kmh, c.side);
-    if (!c.bounced && t01 >= bounceT(c.delivery.depth, c.kmh)) {
+    let p;
+    if (c.hit) {
+      // Returned before its arrival point: the eyes are still scored, against where the ball really is now (off the racket).
+      this.advanceReturn(c.hit, dt);
+      p = c.hit.st.p;
+    } else {
+      p = ballPosition(t01, sd.lane, sd.curve, sd.depth, sd.kmh, sd.side);
+      if (this.tryRacket(c, p, serveVelocity(t01, sd, c.dur), time)) p = c.hit.st.p;
+    }
+    if (!c.hit && !c.bounced && t01 >= bounceT(c.delivery.depth, c.kmh)) {
       c.bounced = true; // exactly once: the ball touches the court
       this.local.set(p[0], p[1], p[2]);
       this.world3.copy(this.local);
@@ -827,7 +1006,9 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     const f = this.flow;
     const summary = c.trial.finish();
     this.cur = null;
-    this.roll = c.roll ?? null; // the ball is not removed: it keeps rolling behind the player and stays at rest
+    this.roll = c.hit ? null : c.roll ?? null; // the ball is not removed: it carries on behind the player
+    this.returned = c.hit ?? null; // a return flies on (over the net and into the court) while the next serve is set up
+    if (!c.warmup && c.racketSeen) this.hand.serves += 1; // a serve faced with the racket in hand counts for the racket line
     const entry = f.completeBall(summary, Date.now());
     if (!entry) return;
     if (import.meta.env.DEV) {
@@ -897,6 +1078,7 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
     this.scene3d.setBallAtRest(this.flow.phase === PHASE.PLAYING && !!this.cur && !this.cur.released);
     this.ui.update();
     this.updateHeadDot();
+    this.updateRacket(dt, time); // before the ball moves, so the hit test uses this frame's racket
 
     switch (this.flow.phase) {
       case PHASE.MODE:
@@ -913,14 +1095,21 @@ export class GameSystem extends createSystem({ pressed: { required: [RayInteract
         break;
       case PHASE.BETWEEN:
         if (this.roll) {
-          stepRoll(this.roll, dt);
+          stepCarry(this.roll, dt);
           this.placeRoll(this.roll, dt);
+        }
+        if (this.returned) {
+          this.advanceReturn(this.returned, dt);
+          this.placeReturned(this.returned.st, dt);
         }
         if (this.nextAt !== null && time >= this.nextAt) this.beginBall();
         break;
       default:
         break;
     }
+    // (Once the next serve starts, the same ball is in the server's hand: the last return has long landed by then.)
+    this.callout.update(dt);
+    this.meter.update(dt);
     if (this.flash && this.flash.until < time && this.flow.phase !== PHASE.SCORECARD) {
       this.flash = null;
       this.refreshUi();

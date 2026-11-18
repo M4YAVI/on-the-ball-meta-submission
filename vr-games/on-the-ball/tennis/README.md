@@ -2,7 +2,7 @@
 
 The player is the **receiver**, seated on the baseline. The server stands on the far baseline, about 23 m away, tosses the ball,
 strikes it, and it comes to you: it bounces **once** in the service box, rises, and is gone about 1.2 m in front of your eyes.
-The player never hits, catches or touches the ball: they only watch it, and the eyes are the input. Same rules as cricket and
+The eyes are the score: the player follows the serve with their eyes. They also return it with a racket in their hand (hand play, below); the eye score never depends on the racket. Same rules as cricket and
 football: watch the ball, get the count; green / amber / red / unscored; Eye mode only after a passed calibration; Head mode is
 separate and always labelled; a sensor failure is UNSCORED, never red.
 
@@ -71,3 +71,27 @@ Through the hub (`vr-games`), tennis is served at `/ontheball/tennis/`, and the 
   little higher; the physics takes the contact point from `PATH.releaseY`.
 * The bounce point is not a real wide / T placement: the ball is always aimed so that it ends up to the player's side, close enough
   to follow comfortably. Wide and T therefore describe where the ball ends relative to the receiver.
+
+## Hand play: the racket
+
+The receiver holds a racket and returns the serve. It is drawn only as a player sees it: the racket, their right hand round
+the grip with a sweatband, the free left hand, and arms that run back to the shoulders below the view.
+
+- **Headset:** the racket follows the right controller's grip pose (hold it like a racket, palm behind the strings). The left
+  controller is the free hand, and it is drawn on the handle when it is there (two-handed backhand). Nothing moves on its own.
+- **PC emulator:** watch the ball and roll the wheel FORWARD as it comes. The racket goes to the ball by itself. A forward roll
+  up to about a second early is held in the take-back and released on time. Rolled within half a second it is PERFECT; earlier
+  it is EARLY. After a held swing the racket comes back to ready on its own. It is a forehand on the right and a two-handed
+  backhand on the left (`src/core/swing.js` PcSwing, `src/xr/mouse-racket.js`).
+- **Easy play:** a swinging racket meets the ball if its sweet spot passes within 30 cm of it (42 cm on PC; `ASSIST`). A hit
+  always goes over the net and lands in (`easyReturn`): PERFECT is deep and fast (a winner), EARLY is pulled cross-court,
+  LATE is pushed the other way. PERFECT covers 25 cm either side of the ideal contact point.
+- **Physics** (`src/core/racket-physics.js`): a swept racket-vs-ball test, string bed vs frame, and a sweet spot. Topspin and
+  lift on the return, then the net, IN/OUT on the singles lines, and the screens round the court. After its arrival point the
+  serve flies on along its own path through the hitting zone. It is turned aside only past any racket, about 40 cm from the eyes.
+- **Feedback only:** the EARLY / PERFECT / LATE meter (left), the WINNER! / IN / OUT / NET / Framed call-out, and one scorecard
+  line ("Racket: 9 of 9 returns in · 5 winners").
+- **The eye score is unchanged:** it still ends at the arrival point (1.2 m out). A ball returned before that is followed off
+  the racket.
+- Tests: `tests/racket.test.mjs`. Demo video: `node record-tennis-returns.mjs` at the repo root (needs `npm run dev:tennis`),
+  which writes `videos/on_the_ball_tennis_returns.mp4`.
