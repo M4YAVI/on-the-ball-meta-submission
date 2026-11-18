@@ -28,7 +28,10 @@ jobs:
           cache: npm
           cache-dependency-path: vr-games/package-lock.json
       # One install in vr-games serves every app (the same layout one-server.mjs uses locally).
+      # onnxruntime-node's install script downloads a CUDA build that GitHub's runners can't fetch (404). The games don't use it.
       - run: npm ci
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       # Builds the lobby and the five games (Glove Up, Bulb Rush, ON THE BALL, Football, Tennis) and
       # assembles them into vr-games/hub. PUBLIC_BASE puts the games under /<repo>/ on Pages.
       - name: Build lobby and games
