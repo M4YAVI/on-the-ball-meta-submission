@@ -126,7 +126,7 @@ const MAX_MPH = Math.ceil(95 * 0.82 + (1.2 + 2.5) * 0.82); // the pro level's fa
             if (!sign) sign = { nod: false, shake: false, ring: false, msg: sys.hud.model.message, called: sys.calledAt.clone() };
             if (sys.pitcher.gesture === 'nod') sign.nod = true;
             if (sys.pitcher.gesture === 'shake') sign.shake = true;
-            if (sys.target.visible && sys.target.position.distanceTo(sys.calledAt) < 1e-6) sign.ring = true;
+            if (sys.target.position.distanceTo(sys.calledAt) < 1e-6) sign.ring = true; // the ring is hidden (CFG.zoneHint off) but still sits on the called spot
             if (how === 'catch' && opts.target) placeGrip(sys.glove.side, sys.calledAt); // set the target
           }
           if (sys.state === 'windup') {
@@ -423,7 +423,7 @@ const MAX_MPH = Math.ceil(95 * 0.82 + (1.2 + 2.5) * 0.82); // the pro level's fa
     'the whole arsenal is thrown (all 12 pitch types)': PITCHES < 23 || ALL.every((n) => names.has(n)),
     'curveball drops (and the four-seamer rides) by real inches': PITCHES < 9 || (mean(byName('Curveball').map((p) => p.moveY)) < -0.12 && mean(fastballs.map((p) => p.moveY)) > 0.2),
     'sweeper sweeps glove side (catcher\'s right), sinker runs arm side (left)': PITCHES < 15 || (mean(byName('Sweeper').map((p) => p.moveX)) > 0.2 && mean(byName('Sinker').map((p) => p.moveX)) < -0.15 && mean(byName('Changeup').map((p) => p.moveX)) < -0.1),
-    'battery: every pitch is signed, he nods, and the gold ring marks the called spot': [A, B, C, D, E].every((r) => r.pitches.every((p) => p.signed)),
+    'battery: every pitch is signed, he nods, and the called spot is tracked': [A, B, C, D, E].every((r) => r.pitches.every((p) => p.signed)),
     'battery: he shakes off a sign now and then': [A, B, C, D].some((r) => r.pitches.some((p) => p.shook)),
     'battery: each pitch crosses near the called spot (his command), never out of reach': log.every((p) => p.fromCall !== null && p.fromCall < 0.5),
     'battery: the umpire calls every pitch, strikes and balls, and says so': A.pitches.every((p) => p.ump && /STRIKE|Ball/.test(p.msg)) && A.strikes > 5 && A.strikes < PITCHES,

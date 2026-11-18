@@ -1,5 +1,9 @@
 import { Quaternion, Vector3 } from '@iwsdk/core';
 import { CFG } from './config.js';
+// The verdict monitor and the calibration check are ON THE BALL's own code, not a copy: one source of truth.
+import { CAL, CalibrationCheck, GazeVerdict, VERDICT } from '../../on-the-ball/src/core/gaze-verdict.js';
+
+export { CAL, CalibrationCheck, VERDICT };
 
 // "Eyes on the ball": where is the player looking while the delivery is in the air?
 //
@@ -24,22 +28,10 @@ const RAD = 180 / Math.PI;
 // head pose drifts off the head line while the head turns, which could otherwise pass as "eye movement".
 const HEAD_STILL_DEG_S = 10;
 // With the head still, an eye ray this far off the head's forward line is not a head ray...
-const SEPARATION_DEG = 2.5;
+const SEPARATION_DEG = 1.5; // same as ON THE BALL / the SDK (passAngleDeg)
 // ...or the eye ray has moved this far inside the head (range of directions, not a running total, so sensor noise
 // cannot add up to a false "eyes" over time).
 const SPREAD_DEG = 2;
-// Passive head-locked monitor, same numbers as ON THE BALL / @iwsdk/xr-input GAZE_VERDICT.
-export const VERDICT = Object.freeze({
-  UNKNOWN: 'unknown', // not enough evidence yet
-  NO_GAZE: 'no-gaze', // the runtime gave no gaze pose
-  EYE: 'eye-independent', // the gaze ray moved independently of the head
-  HEAD_LOCKED: 'head-locked', // the gaze ray matched the head ray the whole time
-});
-const LOCKED_IDENTICAL_DEG = 0.05;
-const LOCKED_RATIO = 0.95;
-const LOCKED_MAX_DEG = 0.1;
-const LOCKED_MIN_S = 3;
-const LOCKED_MIN_FRAMES = 90;
 // Gaze filter: heavy smoothing while fixating (kills jitter), almost none during a saccade (no lag).
 const FC_MIN = 3; // Hz while still
 const FC_BETA = 0.12; // extra Hz per degree/second
@@ -123,14 +115,45 @@ export class FocusTracker {
 
     this.emuX = 0; // emulator mouse, -1..1 across the view
     this.emuY = 0;
-    this.emuMoved = false;
-    if (typeof window !== 'undefined' && window.addEventListener) {
-      window.addEventListener('pointermove', (e) => {
-        if (!window.innerWidth || !window.innerHeight) return;
-        this.emuX = (e.clientX / window.innerWidth) * 2 - 1;
-        this.emuY = -((e.clientY / window.innerHeight) * 2 - 1);
+    this.emuMoved = false; // the mouse has been over the view at least once
+    this.emuOver = false; // the mouse is over the view right now (not on the emulator's toolbar or panels)
+    this.emuNdc = new Vector3();
+    if (typeof window !== 'undefined' && window.addEventListener && typeof document !== 'undefined') {
+      // The mouse is the eyes only while it is over the 3D view. On the emulator's toolbar, its hand panels or
+      // outside the window it is not looking at anything in the scene: no gaze data then (not scored), instead of
+      // a "gaze" stuck up on the toolbar that reads as looking away from the ball.
+      const locked = () => !!document.pointerLockElement;
+      const onMove = (e) => {
+        if (locked()) {
+          // Mouse-look: the mouse turns the head, the cursor is hidden, so the eyes look straight ahead.
+          this.emuX = 0;
+          this.emuY = 0;
+          this.emuOver = true;
+          this.emuMoved = true;
+          return;
+        }
+        const t = e.target;
+        if (!t || t.tagName !== 'CANVAS') {
+          this.emuOver = false;
+          return;
+        }
+        const r = t.getBoundingClientRect();
+        if (!(r.width > 0 && r.height > 0)) return;
+        this.emuX = ((e.clientX - r.left) / r.width) * 2 - 1;
+        this.emuY = -(((e.clientY - r.top) / r.height) * 2 - 1);
+        this.emuOver = true;
         this.emuMoved = true;
+      };
+      window.addEventListener('pointermove', onMove, true);
+      document.addEventListener('pointerlockchange', () => {
+        if (locked()) {
+          this.emuX = 0;
+          this.emuY = 0;
+          this.emuOver = true;
+        }
       });
+      document.documentElement.addEventListener('pointerleave', () => (this.emuOver = false));
+      window.addEventListener('blur', () => (this.emuOver = false));
     }
     this.resetPitch();
   }
@@ -149,40 +172,23 @@ export class FocusTracker {
   }
 
   resetVerdict() {
-    this.verdict = VERDICT.UNKNOWN;
-    this.vFrames = 0;
-    this.vIdentical = 0;
-    this.vMaxDeg = 0;
-    this.vInvalid = 0;
-    this.vSeconds = 0;
+    this.gazeVerdict = new GazeVerdict(); // ON THE BALL's monitor
+    this.vClock = 0;
   }
 
-  // Passive monitor (ON THE BALL GazeVerdict): does the gaze ray ever leave the head ray?
-  // offDeg: angle between the gaze ray and the head's forward line this frame, or NaN with no gaze pose.
-  updateVerdict(offDeg, dt) {
-    if (this.eyeSeen) {
-      this.verdict = VERDICT.EYE;
-      return;
-    }
-    if (this.verdict === VERDICT.EYE) this.resetVerdict(); // eye confirmation was cleared: start the check again
-    if (!Number.isFinite(offDeg)) {
-      this.vInvalid++;
-      if (this.verdict === VERDICT.UNKNOWN && this.vFrames === 0 && this.vInvalid >= LOCKED_MIN_FRAMES) this.verdict = VERDICT.NO_GAZE;
-      return;
-    }
-    if (this.verdict === VERDICT.NO_GAZE) this.verdict = VERDICT.UNKNOWN;
-    this.vFrames++;
-    this.vSeconds += dt;
-    if (offDeg < LOCKED_IDENTICAL_DEG) this.vIdentical++;
-    if (offDeg > this.vMaxDeg) this.vMaxDeg = offDeg;
-    if (
-      this.vSeconds >= LOCKED_MIN_S &&
-      this.vFrames >= LOCKED_MIN_FRAMES &&
-      this.vIdentical / this.vFrames >= LOCKED_RATIO &&
-      this.vMaxDeg < LOCKED_MAX_DEG
-    ) {
-      this.verdict = VERDICT.HEAD_LOCKED;
-    }
+  // The passive verdict: eye-independent once real eye movement was confirmed here, otherwise ON THE BALL's GazeVerdict
+  // (no-gaze, head-locked, or unknown while there is not enough evidence yet).
+  get verdict() {
+    return this.eyeSeen ? VERDICT.EYE : this.gazeVerdict.verdict;
+  }
+
+  // eyeLocal: the gaze direction in head space, or null with no gaze pose. Fed to ON THE BALL's GazeVerdict
+  // (the angle between two directions does not change when both are expressed in head space).
+  updateVerdict(eyeLocal, dt) {
+    if (this.eyeSeen) return;
+    this.vClock += dt;
+    const tracked = !!eyeLocal;
+    this.gazeVerdict.update(this.vClock, tracked ? [eyeLocal.x, eyeLocal.y, eyeLocal.z] : null, [0, 0, -1], tracked);
   }
 
   // Head-still evidence that the eye ray moves on its own. local: eye direction in head space (unit).
@@ -240,11 +246,26 @@ export class FocusTracker {
       player.eyeSpace.getWorldQuaternion(this.inEyeQuat);
       this.inEyeKind = 'tracked';
     } else if (typeof window !== 'undefined' && window.IWER_DEVICE && this.emuMoved) {
-      // Emulator: aim the gaze ray from the head toward the mouse position.
-      this.inEyeLocal.set(this.emuX * EMU_HALF_FOV_X, this.emuY * EMU_HALF_FOV_Y, -1).normalize();
-      this.inEyeKind = 'simulated';
+      // Emulator: the gaze ray goes from the head through the pixel under the mouse. Unprojected with the camera
+      // that drew the frame, so the ring sits exactly under the cursor at any window size or aspect.
+      if (this.emuOver) {
+        this.emuLocal(camera, this.inEyeLocal);
+        this.inEyeKind = 'simulated';
+      }
+      // Cursor off the view: no eye data this frame (a blink-length gap is bridged, longer is not scored).
     }
     this.process(dt);
+  }
+
+  // The mouse's direction in head (camera) space, through the camera's own projection. Falls back to a fixed
+  // field of view when the camera has no usable projection.
+  emuLocal(camera, out) {
+    const inv = camera && camera.projectionMatrixInverse;
+    if (inv) {
+      this.emuNdc.set(this.emuX, this.emuY, 0.5).applyMatrix4(inv);
+      if (finiteVec(this.emuNdc) && this.emuNdc.z < 0) return out.copy(this.emuNdc).normalize();
+    }
+    return out.set(this.emuX * EMU_HALF_FOV_X, this.emuY * EMU_HALF_FOV_Y, -1).normalize();
   }
 
   // Test / tool entry: feed one frame of head (and optional eye) pose without a player rig.
@@ -319,7 +340,7 @@ export class FocusTracker {
         if (this.inEyeKind === 'simulated') this.eyeSeen = true;
         else if (this.eyeEvidence(this.rawLocal, offDeg)) this.eyeSeen = true;
       }
-      if (tracked) this.updateVerdict(offDeg, dt);
+      if (tracked) this.updateVerdict(this.rawLocal, dt);
       if (this.eyeSeen) {
         this.filterEye(dt);
         this.mode = 'eyes';
@@ -350,7 +371,7 @@ export class FocusTracker {
     }
 
     // No eye data (and none ever confirmed): the head's direction stands in, labelled as head.
-    if (!haveEye) this.updateVerdict(NaN, dt);
+    if (!haveEye) this.updateVerdict(null, dt);
     this.mode = 'head';
     this.valid = true;
     this.holding = false;
@@ -372,7 +393,7 @@ export class FocusTracker {
       return;
     }
     let speed = (angleBetween(this.rawLocal, this.prevRawLocal) * RAD) / dt;
-    if (speed > GLITCH_DEG_S && this.glitch < MAX_GLITCH_FRAMES) {
+    if (speed > GLITCH_DEG_S && this.glitch < MAX_GLITCH_FRAMES && this.inEyeKind !== 'simulated') {
       this.glitch++;
       this.rawLocal.copy(this.prevRawLocal); // ignore the impossible jump
       speed = 0;
@@ -380,6 +401,12 @@ export class FocusTracker {
       this.glitch = 0;
     }
     this.eyeSpeed = speed;
+    if (this.inEyeKind === 'simulated') {
+      // The mouse has no sensor noise to filter: smoothing it only makes the ring lag behind the cursor.
+      this.filtLocal.copy(this.rawLocal);
+      this.prevRawLocal.copy(this.rawLocal);
+      return;
+    }
     const fc = FC_MIN + FC_BETA * speed;
     const alpha = 1 / (1 + 1 / (2 * Math.PI * fc * dt));
     this.filtLocal.lerp(this.rawLocal, alpha).normalize();
@@ -464,99 +491,5 @@ export class FocusTracker {
   }
   get gazeDir() {
     return this.dir;
-  }
-}
-
-// ---------- calibration: "is this really your eyes?" ----------
-// Same check as ON THE BALL (src/core/gaze-verdict.js CalibrationCheck), same numbers. The player keeps the head still
-// and looks at each target in turn (e.g. a dot left, then a dot right). Only a gaze ray that moves independently of the
-// head can pass. Pure logic: it is fed directions and times, so it is unit tested; it draws nothing itself.
-// Passing it never proves the signal is hardware-real (the emulator can pass), so emulated input stays labelled simulated.
-export const CAL = Object.freeze({ IDLE: 'idle', RUNNING: 'running', PASSED: 'passed', FAILED: 'failed' });
-
-const angleDegV = (a, b) => {
-  if (!finiteVec(a) || !finiteVec(b)) return NaN;
-  const la = a.length();
-  const lb = b.length();
-  if (!(la > 1e-9 && lb > 1e-9)) return NaN;
-  return Math.acos(Math.min(1, Math.max(-1, a.dot(b) / (la * lb)))) * RAD;
-};
-
-export class CalibrationCheck {
-  // targets: [{ id, dir: Vector3 }] world-space directions, shown one after another.
-  constructor({ targets, dwellMs = 400, timeoutMs = 15000, aimTolDeg = 6, headDriftDeg = 4, minSeparationDeg = 6 }) {
-    if (!Array.isArray(targets) || targets.length === 0) throw new TypeError('CalibrationCheck needs targets');
-    this.targets = targets;
-    this.dwellMs = dwellMs;
-    this.timeoutMs = timeoutMs;
-    this.aimTolDeg = aimTolDeg;
-    this.headDriftDeg = headDriftDeg;
-    this.minSeparationDeg = minSeparationDeg;
-    this.status = CAL.IDLE;
-    this.targetIndex = 0;
-    this.reason = null;
-  }
-
-  start(tMs, headDir) {
-    this.status = CAL.RUNNING;
-    this.reason = null;
-    this.targetIndex = 0;
-    this.headBase = headDir.clone();
-    this._beginTarget(tMs);
-  }
-
-  _beginTarget(tMs) {
-    this.targetStart = tMs;
-    this.since = null;
-    this.blockers = { 'no-gaze': 0, 'off-target': 0, 'head-moved': 0, 'gaze-follows-head': 0 };
-  }
-
-  snapshot(progress = 0) {
-    return { status: this.status, targetIndex: this.targetIndex, progress, reason: this.reason };
-  }
-
-  // eyeDir / headDir: world-space directions. tracked: the runtime gave a gaze pose this frame.
-  sample(tMs, eyeDir, headDir, tracked) {
-    if (this.status !== CAL.RUNNING) return this.snapshot(this.status === CAL.PASSED ? 1 : 0);
-    if (!Number.isFinite(tMs)) return this.snapshot();
-    if (tMs - this.targetStart > this.timeoutMs) {
-      this.status = CAL.FAILED;
-      let worst = 'no-gaze';
-      let most = -1;
-      for (const [k, n] of Object.entries(this.blockers)) {
-        if (n > most) {
-          most = n;
-          worst = k;
-        }
-      }
-      this.reason = worst;
-      return this.snapshot();
-    }
-    const target = this.targets[this.targetIndex];
-    const aim = tracked ? angleDegV(eyeDir, target.dir) : NaN;
-    const drift = angleDegV(headDir, this.headBase);
-    const sep = tracked ? angleDegV(eyeDir, headDir) : NaN;
-    let blocked = null;
-    if (!tracked || !Number.isFinite(aim) || !Number.isFinite(sep)) blocked = 'no-gaze';
-    else if (!(aim <= this.aimTolDeg)) blocked = 'off-target';
-    else if (!(drift <= this.headDriftDeg)) blocked = 'head-moved';
-    else if (!(sep >= this.minSeparationDeg)) blocked = 'gaze-follows-head';
-    if (blocked) {
-      this.blockers[blocked]++;
-      this.since = null;
-      return this.snapshot();
-    }
-    if (this.since === null) this.since = tMs;
-    const progress = Math.min(1, (tMs - this.since) / this.dwellMs);
-    if (progress >= 1) {
-      this.targetIndex++;
-      if (this.targetIndex >= this.targets.length) {
-        this.status = CAL.PASSED;
-        return this.snapshot(1);
-      }
-      this._beginTarget(tMs);
-      return this.snapshot(0);
-    }
-    return this.snapshot(progress);
   }
 }

@@ -33,7 +33,7 @@ export const CFG = {
   goodTarget: 0.12, // the mitt within this of the called spot as he comes set: a good target
   feedbackDelay: 1.1,
   restartLockout: 1.0,
-  zoneHint: true, // a faint strike-zone frame, and a ring on the called spot
+  zoneHint: false, // true draws a faint strike-zone frame and a gold ring on the called spot; off, the player reads the sign and judges the spot himself
   maxLife: 4, // safety net for a ball that never resolves
   missZ: 0.25, // a ball past this z (behind the glove) is missed
   // Eyes on the ball: how close (degrees) the gaze must stay to the ball to count as watching it.

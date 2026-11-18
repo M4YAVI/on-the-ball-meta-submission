@@ -115,7 +115,7 @@ function saveTutorialDone() {
 }
 // One short line at a time, each said when it is useful (never a list of rules).
 const TUT_CALLS = ['middle', 'away', 'up'];
-const TUT_SIGN = ['Catch it in the gold target ring', 'The pitch target moves. Follow it', 'Watch the ball from the mound'];
+const TUT_SIGN = ['Catch it with your mitt', 'The pitch spot moves. Read the sign', 'Watch the ball from the mound'];
 const TUT_CAUGHT = ['That is it! Again', 'Nice. One more', 'Gold glove!'];
 
 // Round flow: idle -> ready -> windup -> flying -> feedback -> (ready ... | over) -> ready ...
@@ -460,7 +460,7 @@ export class GameSystem extends createSystem({}) {
     }
     const lines = [{ text: `Catch ${CFG.pitches} pitches with your mitt`, color: COLORS.ink }];
     lines.push({ text: 'Keep your eyes on the ball, all the way in', color: COLORS.dim });
-    lines.push({ text: 'Set your mitt on the gold target ring: that is your pitch target', color: COLORS.dim });
+    lines.push({ text: 'Read the catcher\'s sign, then set your mitt where he calls it', color: COLORS.dim });
     if (this.best) lines.push({ text: `Your best (${this.level.name}): ${this.best} / ${CFG.pitches}`, color: COLORS.good });
     lines.push({ text: inHeadset ? `${this.level.name} speed: touch the blue ball to change` : `${this.level.name} speed (L changes it)`, color: COLORS.dim });
     lines.push({ text: inHeadset ? `Mitt on your ${this.glove.side} hand: touch the gold ball to swap` : 'On a PC, move the mouse to catch. G swaps hands', color: COLORS.dim });
@@ -539,10 +539,10 @@ export class GameSystem extends createSystem({}) {
     this.zoneCenter.set(0, Math.max(ZONE_FLOOR, this.head.y - CFG.targetBelowHead), CFG.arriveZ);
     this.calledAt.copy(this.zoneCenter);
     this.target.position.copy(this.calledAt);
-    this.target.visible = true;
+    this.target.visible = CFG.zoneHint;
     this.target.scale.setScalar(1 + 0.12 * Math.sin(t.t * 5));
     this.zone.position.copy(this.zoneCenter);
-    this.zone.visible = true;
+    this.zone.visible = CFG.zoneHint;
     const near = this.glove.ok && (inTargetSquare(this.glove.pocket, this.zoneCenter) || inTargetSquare(this.glove.pocket, this.calledAt));
     t.hold = near ? t.hold + dt : Math.max(0, t.hold - dt * 0.5);
     if (t.hold >= 0.35 || t.t >= 8) {
@@ -552,8 +552,8 @@ export class GameSystem extends createSystem({}) {
       this.message('Good! Here it comes', COLORS.good, 1.2);
       return;
     }
-    let text = inHeadset ? `Hold your ${this.glove.side} hand in the gold target ring` : 'Move the mouse: mitt into the gold target ring';
-    if (inHeadset && t.t > 5) text = `Reach your ${this.glove.side} hand towards the gold target ring`;
+    let text = inHeadset ? `Hold your ${this.glove.side} hand out in front, at chest height` : 'Move the mouse: mitt out in front, at chest height';
+    if (inHeadset && t.t > 5) text = `Reach your ${this.glove.side} hand out towards the mound`;
     this.message(text, '#ffd166', 0.5);
   }
 
@@ -759,7 +759,7 @@ export class GameSystem extends createSystem({}) {
       this.tut.fails++;
       if (why === 'bare') msg = 'Use the mitt, not your bare hand';
       else if (why === 'back') msg = 'Face the mitt to the pitcher';
-      else msg = this.tut.fails > 1 ? 'Mitt in the gold target ring, then wait' : 'Not quite. Mitt to target ring';
+      else msg = this.tut.fails > 1 ? 'Mitt out in front at chest height, then wait' : 'Not quite. Mitt out in front';
     }
     this.message(why === 'missed' && !this.tut ? `${msg}  |  ${ump}` : msg, COLORS.bad, CFG.feedbackDelay);
     if (why === 'bare') {

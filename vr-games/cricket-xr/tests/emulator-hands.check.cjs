@@ -41,8 +41,8 @@ const fmt = (b) => FINGERS.map((k) => `${k} ${b[k] === null ? '?' : b[k].toFixed
   const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: shots ? { width: 1280, height: 720 } : { width: 640, height: 360 }, deviceScaleFactor: shots ? 2 : 1 });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  // The launch the person uses: ?autoxr starts the emulator session in hand mode, with the fielder hands on.
-  await page.goto(`https://localhost:8081/?autoxr=1&balls=${types.length}&tutorial=0`);
+  // ?autoxr starts the emulator session in hand mode; ?assist=1 turns the fielder hands on (they are off by default).
+  await page.goto(`https://localhost:8081/?autoxr=1&assist=1&balls=${types.length}&tutorial=0`);
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 60000 });
   await page.waitForFunction(() => !!window.__world.session, null, { timeout: 20000 });
   await page.waitForTimeout(1000);

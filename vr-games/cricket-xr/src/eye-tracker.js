@@ -135,7 +135,8 @@ export class EyeRingTracker {
     // Position tracker at gaze projection point. Snap on large gaze shifts (>0.8m) to track fast
     // eye saccades immediately; apply subtle exponential smoothing on fine tracking to eliminate micro-jitter.
     const gap = this.group.position.distanceTo(this.targetPoint);
-    if (this._firstFrame || gap > 0.8) {
+    // The emulator mouse is already exact: the ring stays under the cursor instead of trailing it.
+    if (this._firstFrame || gap > 0.8 || focus.simulated) {
       this.group.position.copy(this.targetPoint);
       this._firstFrame = false;
     } else {

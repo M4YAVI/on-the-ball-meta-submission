@@ -3,7 +3,7 @@
 // "eyes move, head stays put" are genuinely different inputs.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Euler, Quaternion, Vector3 } from '@iwsdk/core';
+import { Euler, PerspectiveCamera, Quaternion, Vector3 } from '@iwsdk/core';
 import { CAL, CalibrationCheck, FocusTracker, VERDICT } from '../src/gaze.js';
 import { CFG } from '../src/config.js';
 
@@ -490,25 +490,27 @@ test('a long eye-data dropout never silently becomes head tracking', () => {
   assert.equal(t.focus, null, 'no made-up score');
 });
 
+// ON THE BALL's CalibrationCheck takes directions as [x, y, z] arrays.
+const A = (v) => [v.x, v.y, v.z];
 const calTargets = () => [
-  { id: 'left', dir: new Vector3(-Math.sin(15 * DEG), 0, -Math.cos(15 * DEG)) },
-  { id: 'right', dir: new Vector3(Math.sin(15 * DEG), 0, -Math.cos(15 * DEG)) },
+  { id: 'left', dir: A(new Vector3(-Math.sin(15 * DEG), 0, -Math.cos(15 * DEG))) },
+  { id: 'right', dir: A(new Vector3(Math.sin(15 * DEG), 0, -Math.cos(15 * DEG))) },
 ];
 
 test('calibration: head still and eyes on each dot passes', () => {
   const cal = new CalibrationCheck({ targets: calTargets() });
-  cal.start(0, FWD.clone());
+  cal.start(0, A(FWD));
   let snap;
   let ms = 0;
   for (const tg of cal.targets) {
-    for (let i = 0; i < 40; i++) snap = cal.sample((ms += 1000 / 72), tg.dir, FWD, true);
+    for (let i = 0; i < 40; i++) snap = cal.sample((ms += 1000 / 72), tg.dir, A(FWD), true);
   }
   assert.equal(snap.status, CAL.PASSED);
 });
 
 test('calibration: a gaze ray that follows the head to the dots fails as gaze-follows-head', () => {
   const cal = new CalibrationCheck({ targets: calTargets(), timeoutMs: 1000, headDriftDeg: 30 });
-  cal.start(0, FWD.clone());
+  cal.start(0, A(FWD));
   let snap;
   for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = cal.sample(ms, cal.targets[0].dir, cal.targets[0].dir, true);
   assert.equal(snap.status, CAL.FAILED);
@@ -517,22 +519,46 @@ test('calibration: a gaze ray that follows the head to the dots fails as gaze-fo
 
 test('calibration: turning the head to the dot fails as head-moved; no gaze data fails as no-gaze', () => {
   const moved = new CalibrationCheck({ targets: calTargets(), timeoutMs: 1000 });
-  moved.start(0, FWD.clone());
+  moved.start(0, A(FWD));
   let snap;
-  const halfway = new Vector3(-Math.sin(8 * DEG), 0, -Math.cos(8 * DEG));
+  const halfway = A(new Vector3(-Math.sin(8 * DEG), 0, -Math.cos(8 * DEG)));
   for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = moved.sample(ms, moved.targets[0].dir, halfway, true);
   assert.equal(snap.reason, 'head-moved');
   const none = new CalibrationCheck({ targets: calTargets(), timeoutMs: 1000 });
-  none.start(0, FWD.clone());
-  for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = none.sample(ms, null, FWD, false);
+  none.start(0, A(FWD));
+  for (let ms = 0; ms <= 1100; ms += 1000 / 72) snap = none.sample(ms, null, A(FWD), false);
   assert.equal(snap.status, CAL.FAILED);
   assert.equal(snap.reason, 'no-gaze');
 });
 
 test('calibration: NaN inputs never pass and never throw', () => {
   const cal = new CalibrationCheck({ targets: calTargets(), timeoutMs: 500 });
-  cal.start(0, FWD.clone());
+  cal.start(0, A(FWD));
   let snap;
-  for (let ms = 0; ms <= 600; ms += 1000 / 72) snap = cal.sample(ms, new Vector3(NaN, 0, -1), FWD, true);
+  for (let ms = 0; ms <= 600; ms += 1000 / 72) snap = cal.sample(ms, A(new Vector3(NaN, 0, -1)), A(FWD), true);
   assert.equal(snap.status, CAL.FAILED);
+});
+
+// Emulator: the mouse stands in for the eyes. The gaze must go exactly through the pixel under the cursor (the
+// camera's own projection, any aspect), and must not lag behind it.
+test('emulator mouse gaze: unprojected through the real camera, so it points at what is under the cursor', () => {
+  const cam = new PerspectiveCamera(70, 16 / 9, 0.05, 100);
+  cam.updateProjectionMatrix();
+  const t = new FocusTracker();
+  const out = new Vector3();
+  for (const [x, y] of [[0, 0], [0.6, -0.4], [-0.9, 0.8]]) {
+    t.emuX = x;
+    t.emuY = y;
+    t.emuLocal(cam, out);
+    const back = out.clone().multiplyScalar(5).applyMatrix4(cam.projectionMatrix);
+    assert.ok(Math.abs(back.x - x) < 1e-6 && Math.abs(back.y - y) < 1e-6, `(${x}, ${y}) maps back to (${back.x.toFixed(4)}, ${back.y.toFixed(4)})`);
+  }
+});
+
+test('emulator mouse gaze is not smoothed: the gaze follows the cursor on the same frame', () => {
+  const t = new FocusTracker();
+  const look = (deg) => new Vector3(-Math.sin(deg * DEG), 0, -Math.cos(deg * DEG));
+  t.feed(DT, HEAD, new Quaternion(), { local: look(0) });
+  t.feed(DT, HEAD, new Quaternion(), { local: look(20) });
+  assert.ok(angleDeg(t.dir, look(20)) < 0.01, `gaze ${angleDeg(t.dir, look(20)).toFixed(2)} deg behind the cursor`);
 });

@@ -20,8 +20,11 @@
 // finger in the wrong place really does drop the ball. A headset has no IWER_DEVICE and never runs
 // this: real hands are never touched.
 //
-// On when the emulator is launched with ?autoxr (or ?assist=1); ?assist=0 turns it off, and the M key
-// toggles it while playing (manual hands: the emulator's own gizmos, F and click).
+// The PLAYER catches. By default the arrow keys move both hands (left/right/up/down; the mouse stays the eyes) and
+// this module only does what a fielder's hands do by themselves: palms turn to the ball, the hands reach forward and
+// the fingers open into a cup as it nears, and they close round it on contact. Where the hands ARE decides whether
+// it is caught. ?assist=1 plays the hands completely (demos, tests); ?assist=0 or the M key gives the emulator's own
+// gizmos (F and click) instead.
 
 import { Vector3 } from '@iwsdk/core';
 import { BALL_RADIUS } from './ball.js';
@@ -48,6 +51,12 @@ const DOWN = v(0, -1, 0);
 const SX = { left: -1, right: 1 };
 const SIDES = ['left', 'right'];
 const FINGERS = ['thumb', 'index', 'middle', 'ring', 'pinky'];
+const ARROWS = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
+const HAND_SPEED = 2.2; // m/s the arrow keys move the hands
+const smooth = (a, b, x) => {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
 
 // Each finger's own character, so the five never move as one block.
 //   IDLE:     how curled it is when relaxed (0 = the emulator's relaxed hand, 1 = the cup pose).
@@ -57,6 +66,8 @@ const FINGERS = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 //   PHASE:    its own slow breathing.
 const IDLE = { thumb: 0.3, index: 0.42, middle: 0.5, ring: 0.58, pinky: 0.66 };
 const READY = { thumb: 0.5, index: 0.86, middle: 0.95, ring: 1, pinky: 1 };
+// Half the distance between the hands in the ready position (m): about shoulder width apart.
+const READY_GAP = 0.17;
 const WRAP = { thumb: 1.05, index: 1.0, middle: 1.0, ring: 1.0, pinky: 1.0 };
 const DELAY = { thumb: 0.015, index: 0, middle: 0.025, ring: 0.05, pinky: 0.075 }; // seconds after the catch
 const PHASE = { thumb: 0.4, index: 1.1, middle: 2.3, ring: 3.1, pinky: 4.2 };
@@ -98,17 +109,48 @@ export class EmulatorHands {
     for (const side of SIDES) this.hands[side] = { pose: null, corr: v(), sentPalm: null, stage: {}, close: Object.fromEntries(FINGERS.map((f) => [f, 0])) };
 
     const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-    this.launchOn = params.has('autoxr') ? params.get('assist') !== '0' : params.get('assist') === '1';
+    this.auto = params.get('assist') === '1'; // plays the hands completely (demos, tests)
+    this.launchOn = params.get('assist') !== '0'; // otherwise: arrow keys aim, the fielder's technique is automatic
+    this.off = v(); // where the player has moved the hands, from the ready position
+    this.keys = { left: false, right: false, up: false, down: false };
+    this.onKeyUp = (e) => {
+      const k = ARROWS[e.code];
+      if (k) this.keys[k] = false;
+    };
+    this.onArrow = (e) => {
+      const k = ARROWS[e.code];
+      if (!k) return;
+      if (this.live && !this.autoPlay) e.preventDefault(); // the page must not scroll while playing
+      this.keys[k] = true;
+    };
+    // No on-screen PC prompt: this is a VR game. In a headset the player's own hands catch; in the emulator the
+    // arrow keys stay as a silent developer aid only.
+    this.hint = null;
     this.onKey = (e) => {
       if (e.key !== 'm' && e.key !== 'M') return;
       this.manual = !this.manual;
       console.info(this.manual ? '[emulator hands] manual: the emulator gizmos, F and click control the hands' : '[emulator hands] auto: the hands field the ball');
     };
-    if (typeof window !== 'undefined') window.addEventListener('keydown', this.onKey);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', this.onKey);
+      window.addEventListener('keydown', this.onArrow, true);
+      window.addEventListener('keyup', this.onKeyUp, true);
+      window.addEventListener('blur', () => Object.keys(this.keys).forEach((k) => (this.keys[k] = false)));
+    }
+  }
+
+  // Full auto-play: only on request (?assist=1) or when a test/recording forces the hands on.
+  get autoPlay() {
+    return this.auto || this.forced === true;
   }
 
   dispose() {
-    if (typeof window !== 'undefined') window.removeEventListener('keydown', this.onKey);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this.onKey);
+      window.removeEventListener('keydown', this.onArrow, true);
+      window.removeEventListener('keyup', this.onKeyUp, true);
+    }
+    if (this.hint && this.hint.parentNode) this.hint.parentNode.removeChild(this.hint);
     this.release();
   }
 
@@ -156,23 +198,78 @@ export class EmulatorHands {
     };
   }
 
-  // Ready stance: hands in front of the waist, palms forward and a little up, fingers relaxed.
+  // A fielder's ready position (cricket coaching): an athletic stance with the hands apart, about shoulder
+  // width, out in front of the body, palms open and facing the ball, fingers relaxed and pointing down and
+  // forward. The hands only come together into a cup once the ball is on its way (playerPose), so the wait
+  // does not look like two hands held out palms-up. Held a little higher than a real fielder's waist so they
+  // sit in the lower part of the view. `up` lifts them (the coach is striking: hands come up, ready).
+  readyPose(side, h, up = 0) {
+    const sx = SX[side];
+    return this.pose(
+      v(h.x + sx * READY_GAP, h.y - 0.3 + up, h.z - 0.42 - up * 0.6),
+      v(-sx * 0.3, 0.3, -0.9), // palms to the ball, a little up and turned slightly in
+      v(sx * 0.12, -0.9, -0.4), // fingers down and forward, relaxed
+      0.25,
+      0,
+    );
+  }
+
+  // Ready stance while waiting, with a little breathing so the hands are not frozen.
   rest(side, h) {
     const s = this.game;
     const sx = SX[side];
     const striking = s.state === 'swinging';
     const breathe = 0.007 * Math.sin(this.t * 1.8 + (sx > 0 ? 0 : 1.3));
     const sway = 0.004 * Math.sin(this.t * 1.1 + sx);
-    const up = striking ? 0.07 : 0; // the coach is striking: hands come up, ready
-    // In front of the belly and inside the lower part of the view (so the player sees their hands),
-    // not down at the thighs.
-    return this.pose(
-      v(h.x + sx * (striking ? 0.17 : 0.2) + sway, h.y - 0.4 + up + breathe, h.z - 0.5 - up * 0.6),
-      v(-sx * 0.3, 0.55, -0.75), // palms forward and up, ready to receive
-      v(sx * 0.12, 0.75, -0.65), // fingers up and forward
-      striking ? 0.55 : 0.2,
-      0,
-    );
+    const P = this.readyPose(side, h, (striking ? 0.07 : 0) + breathe);
+    P.pos = add(P.pos, v(sway, 0, 0));
+    P.cup = striking ? 0.55 : 0.2;
+    return P;
+  }
+
+  // Player-controlled hands (no assist): the emulator starts its hands up by the face, palms to the turf, which
+  // is no way to field. So when the session starts, and again when a round starts, put each hand once into the
+  // ready position, then let go: from there on the emulator's own controls move them.
+  placeReady() {
+    const d = this.device;
+    if (!d || !d.remote || !d.hands) return;
+    const h = this.head();
+    const rig = this.rigOffset();
+    const arr = (a) => [a.x, a.y, a.z];
+    for (const side of SIDES) {
+      const hand = d.hands[side];
+      if (!hand || !hand.connected) continue;
+      const P = this.readyPose(side, h);
+      const fingers = {};
+      for (const f of FINGERS) fingers[f] = fingerBlend(IDLE[f]); // relaxed, slightly cupped
+      d.remote
+        .dispatch('set_transform', {
+          device: 'hand-' + side,
+          position: add(P.pos, rig, -1),
+          orientation: { fingers: arr(P.fingers), palm: arr(P.palm) },
+          anchor: 'grip',
+        })
+        .then(() => d.remote.dispatch('set_hand_pose', { device: 'hand-' + side, poseId: 'cup', fingers }))
+        .then(() => {
+          if (hand.pin) hand.setPin(null); // stays where it was put; the player moves it from here
+        })
+        .catch((e) => console.warn('[emulator hands] could not place the hands in the ready position:', e && e.message ? e.message : e));
+    }
+  }
+
+  // Calls placeReady() on a new session (once both hands are connected) and on each new round.
+  updatePlacement() {
+    const s = this.game;
+    const d = this.device;
+    const session = s.world && s.world.session;
+    const ready = !!(session && d && d.remote && d.primaryInputMode === 'hand' && d.hands && d.hands.left && d.hands.right && d.hands.left.connected && d.hands.right.connected);
+    const roundStart = (this.prevState === 'idle' || this.prevState === 'over') && s.state === 'ready';
+    this.prevState = s.state;
+    if (!ready) return;
+    if (this.placedFor !== session || roundStart) {
+      this.placedFor = session;
+      this.placeReady();
+    }
   }
 
   chooseTechnique(h) {
@@ -245,6 +342,61 @@ export class EmulatorHands {
     return this.blend(this.blend(start, cover, ease((tc - 0.05) / 0.35)), hold, lift);
   }
 
+  // Moves the player's hands with the arrow keys; with no key held, between balls, they drift back to the middle.
+  moveByKeys(dt) {
+    const k = this.keys;
+    const dx = (k.right ? 1 : 0) - (k.left ? 1 : 0);
+    const dy = (k.up ? 1 : 0) - (k.down ? 1 : 0);
+    const s = this.game;
+    if (dx || dy) {
+      this.off.x += dx * HAND_SPEED * dt;
+      this.off.y += dy * HAND_SPEED * dt;
+    } else if (s.state === 'feedback' || s.state === 'ready') {
+      const f = 1 - Math.exp(-dt / 0.35);
+      this.off.x -= this.off.x * f;
+      this.off.y -= this.off.y * f;
+    }
+    this.off.x = Math.max(-0.95, Math.min(0.95, this.off.x));
+    this.off.y = Math.max(-0.55, Math.min(0.95, this.off.y));
+  }
+
+  // Where the player has put a hand, with a fielder's technique added on top: the palms turn to the ball, fingers
+  // down for a low ball (orthodox cup) and up for a high one (reverse cup), the hands reach forward to meet it and the
+  // fingers open into a cup as it nears. p: how far through the flight the ball is.
+  playerPose(side, h, flying, p) {
+    const s = this.game;
+    const sx = SX[side];
+    const striking = s.state === 'swinging';
+    const y = h.y - 0.3 + this.off.y + (striking ? 0.05 : 0);
+    const rev = smooth(h.y - 0.28, h.y - 0.08, y); // 0 orthodox cup .. 1 reverse cup
+    const fb = flying ? ease((p - 0.06) / 0.5) : 0; // how far into catching mode
+    const inDir = flying ? this.inDir : v(0, 0, -1);
+    const palmLow = add(add(inDir, UP, 0.95), v(-sx * 0.25, 0, 0));
+    const palmHigh = add(add(inDir, UP, 0.1), v(-sx * 0.15, 0, 0));
+    const ready = this.readyPose(side, h);
+    const palm = lerp(ready.palm, lerp(norm(palmLow), norm(palmHigh), rev), fb);
+    const fingers = lerp(ready.fingers, lerp(DOWN, UP, rev), fb);
+    const gap = READY_GAP + (0.045 + 0.035 * rev - READY_GAP) * fb; // from shoulder width the hands close up into a cup (a bit wider for the reverse cup)
+    const reach = flying ? ease((p - 0.2) / 0.6) : 0;
+    const zReady = h.z - 0.45 - (striking ? 0.03 : 0);
+    let z = zReady + (s.aim.z + 0.01 - zReady) * reach;
+    z += 0.05 * (flying ? ease((p - 0.8) / 0.2) : 0); // soft hands: they start to travel back as it arrives
+    const c0 = striking ? 0.55 : 0.2;
+    const cup = c0 + (1 - c0) * (flying ? ease((p - 0.25) / 0.55) : 0);
+    const bob = 0.004 * Math.sin(this.t * 1.8 + (sx > 0 ? 0 : 1.3)) * (1 - fb);
+    return this.pose(v(h.x + this.off.x + sx * gap, y - 0.04 * fb * (1 - rev) + bob, z), palm, fingers, cup, 0);
+  }
+
+  // The technique, read from where the player's hands are (nobody chose it for them).
+  playerTech(h) {
+    const s = this.game;
+    const L = this.hands.left.pose;
+    const R = this.hands.right.pose;
+    const mid = L && R ? (L.pos.x + R.pos.x) / 2 : h.x;
+    const y = L && R ? (L.pos.y + R.pos.y) / 2 : h.y - 0.3;
+    return { twoHand: true, catchSide: s.aim.x >= mid ? 'right' : 'left', reverse: y > h.y - 0.2 };
+  }
+
   // Works out where each hand is this frame (smoothed towards where it wants to be).
   step(dt) {
     const s = this.game;
@@ -253,8 +405,12 @@ export class EmulatorHands {
     const flying = s.state === 'flying';
     if (flying && this.ballKey !== s.ballNo) {
       this.ballKey = s.ballNo;
-      this.tech = this.chooseTechnique(h);
+      this.tech = this.autoPlay ? this.chooseTechnique(h) : this.playerTech(h);
       this.caughtT = -1;
+    }
+    if (!this.autoPlay) {
+      this.moveByKeys(dt);
+      if (flying && this.caughtT < 0) this.tech = this.playerTech(h);
     }
     if (flying) {
       const vl = len(s.vel);
@@ -273,6 +429,8 @@ export class EmulatorHands {
       let want;
       if (this.caughtT >= 0) {
         want = this.heldPose(side, h, this.t - this.caughtT);
+      } else if (!this.autoPlay) {
+        want = this.playerPose(side, h, flying, p);
       } else if (flying && plan && plan.catch === false) {
         const r = this.rest(side, h);
         want = this.blend(r, this.latePose(side), 0.55 * ease((p - 0.5) / 0.5));
@@ -288,7 +446,7 @@ export class EmulatorHands {
         want = this.rest(side, h);
       }
       // Smooth everything, tighter while the ball is in the air.
-      const tau = flying || this.caughtT >= 0 ? 0.04 : 0.16;
+      const tau = flying || this.caughtT >= 0 ? 0.04 : this.autoPlay ? 0.16 : 0.05;
       const k = 1 - Math.exp(-dt / tau);
       H.pose = H.pose ? this.blend(H.pose, want, k) : want;
       this.updateClosing(side, dt);
@@ -417,7 +575,10 @@ export class EmulatorHands {
     // Only while a round is on. Before it and after it the hands are the player's (to touch the
     // PLAY AGAIN / LOBBY orbs, or just to look at). A recording forces them on throughout.
     const inPlay = this.forced === true || s.state === 'ready' || s.state === 'swinging' || s.state === 'flying' || s.state === 'feedback';
+    if (!on || !inPlay) this.updatePlacement();
+    else this.prevState = s.state;
     if (!on || !inPlay) {
+      if (this.hint) this.hint.style.display = 'none';
       if (this.live) {
         this.release();
         this.live = false;
@@ -431,6 +592,7 @@ export class EmulatorHands {
       return;
     }
     this.live = true;
+    if (this.hint) this.hint.style.display = this.autoPlay ? 'none' : 'block';
     this.step(Math.min(dt, 0.1));
     this.apply();
   }
